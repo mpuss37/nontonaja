@@ -12,7 +12,7 @@ import httpx
 
 from .config import load_config, merge_args
 from .providers import flixhq, lk21
-from .quality import select_quality, parse_m3u8
+from .quality import select_quality
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -106,7 +106,7 @@ def _search(query: str) -> list:
     return merged
 
 
-def _play(stream_url: str, title: str, subtitles: list[str], config, headers: dict | None = None) -> None:
+def _play(stream_url: str, title: str, subtitles: list[str], headers: dict | None = None) -> None:
     sub_dir = tempfile.mkdtemp(prefix="nontonaja-subs-")
     local_subs = []
     client = httpx.Client(verify=False, follow_redirects=True, timeout=15)
@@ -224,7 +224,7 @@ def run(args: argparse.Namespace) -> None:
         download(stream_url, download_dir, selected.title, subtitles, config.subs_language)
         return
 
-    _play(stream_url, selected.title, subtitles, config, headers=headers)
+    _play(stream_url, selected.title, subtitles, headers=headers)
 
 
 def main() -> None:

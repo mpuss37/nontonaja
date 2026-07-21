@@ -1,3 +1,2 @@
-player = "mpv"
-download = "."
-history = false
+subs_language = "English"
+# download = "."

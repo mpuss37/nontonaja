@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-import asyncio
 from dataclasses import dataclass, field
 
 import httpx
@@ -93,53 +92,8 @@ def browse(page: str = "populer") -> list[LK21Result]:
 
 
 def search(query: str) -> list[LK21Result]:
-    """Search LK21. Uses playwright if available, falls back to browse pages."""
-    # Try playwright first (fast, full results)
-    try:
-        return _search_playwright(query)
-    except Exception:
-        pass
-
-    # Fallback: browse populer + latest, filter by query
+    """Search LK21 via browse pages, filter by query."""
     return _search_browse(query)
-
-
-def _search_playwright(query: str) -> list[LK21Result]:
-    """Search via playwright (JS-rendered search page)."""
-    from playwright.async_api import async_playwright
-
-    async def _do_search():
-        pw = await async_playwright().start()
-        browser = await pw.chromium.launch(
-            headless=True,
-            executable_path="/usr/bin/chromium",
-            args=["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"],
-        )
-        page = await browser.new_page()
-        try:
-            url = f"{BASE_URL}/search?s={query.replace(' ', '+')}"
-            await page.goto(url, wait_until="domcontentloaded", timeout=15000)
-            try:
-                await page.wait_for_selector("#results article", timeout=10000)
-            except Exception:
-                pass
-            await asyncio.sleep(1)
-
-            html = await page.content()
-            soup = _soup(html)
-
-            results = []
-            for article in soup.select("#results article"):
-                result = _parse_article(article)
-                if result:
-                    results.append(result)
-            return results
-        finally:
-            await page.close()
-            await browser.close()
-            await pw.stop()
-
-    return asyncio.run(_do_search())
 
 
 def _search_browse(query: str) -> list[LK21Result]:
