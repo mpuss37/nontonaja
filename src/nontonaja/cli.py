@@ -11,7 +11,7 @@ import shutil
 import httpx
 
 from .config import load_config, merge_args
-from .providers import flixhq, lk21
+from .providers import flixhq, lk21, idlix
 from .quality import select_quality
 
 
@@ -46,9 +46,14 @@ def _pick(results):
 def _pick_source():
     print("  1. 480p (sub-indo)")
     print("  2. 720p+ (nonsub)")
+    print("  3. 1080p (subtitle)")
     try:
         choice = int(input("Source: "))
-        return "lk21" if choice == 1 else "flixhq"
+        if choice == 1:
+            return "lk21"
+        elif choice == 3:
+            return "idlix"
+        return "flixhq"
     except (ValueError):
         return "flixhq"
 
@@ -72,7 +77,7 @@ def _flixhq_query(title: str) -> str:
 
 
 def _search(query: str) -> list:
-    """Unified search: LK21 + FlixHQ."""
+    """Unified search: LK21 + FlixHQ + IDLIX."""
     try:
         lk21_results = lk21.search(query)
     except Exception:
@@ -91,11 +96,22 @@ def _search(query: str) -> list:
     except Exception:
         flixhq_results = []
 
+    try:
+        idlix_results = idlix.search(query)
+    except Exception:
+        idlix_results = []
+
     merged = list(lk21_dedup)
     lk21_titles = {re.sub(r"\s*\(\d{4}\)$", "", r.title).lower().strip() for r in lk21_dedup}
     for r in flixhq_results:
         key = re.sub(r"\s*\(\d{4}\)$", "", r.title).lower().strip()
         if key not in lk21_titles:
+            merged.append(r)
+
+    existing_titles = {re.sub(r"\s*\(\d{4}\)$", "", r.title).lower().strip() for r in merged}
+    for r in idlix_results:
+        key = re.sub(r"\s*\(\d{4}\)$", "", r.title).lower().strip()
+        if key not in existing_titles:
             merged.append(r)
 
     def _sort_key(r):
@@ -138,6 +154,8 @@ def _play(stream_url: str, title: str, subtitles: list[str], headers: dict | Non
         if headers:
             for k, v in headers.items():
                 mpv_cmd += [f"--http-header-fields={k}: {v}"]
+            if "User-Agent" in headers:
+                mpv_cmd += [f"--user-agent={headers['User-Agent']}"]
         subprocess.run(mpv_cmd)
     finally:
         shutil.rmtree(sub_dir, ignore_errors=True)
@@ -175,6 +193,46 @@ def _get_stream(selected, quality, source_choice) -> tuple[str, list[str], dict]
         if result and result.url:
             url = select_quality(result.url, quality, headers=result.headers)
             return (url, result.subtitles, result.headers)
+    elif source_choice == "idlix":
+        source = getattr(selected, "source", "")
+        if source == "idlix":
+            try:
+                result = idlix.get_stream(selected.id, getattr(selected, "media_type", "movie"))
+            except Exception as e:
+                print(f"get_stream error: {e}")
+                result = None
+        else:
+            # Cross-source: search IDLIX by title
+            try:
+                results = idlix.search(selected.title)
+            except Exception as e:
+                print(f"search error: {e}")
+                results = []
+            matched = None
+            title_norm = re.sub(r"\s*\(\d{4}\)$", "", selected.title).lower().strip()
+            title_words = set(title_norm.split())
+            best_score = 0
+            for r in results:
+                rt = re.sub(r"\s*\(\d{4}\)$", "", r.title).lower().strip()
+                if rt == title_norm:
+                    matched = r
+                    break
+                rt_words = set(rt.split())
+                score = len(title_words & rt_words) / max(len(title_words), 1)
+                if score > best_score and score >= 0.5:
+                    best_score = score
+                    matched = r
+            if not matched:
+                print(f"no match for '{selected.title}'")
+                return None
+            try:
+                result = idlix.get_stream(matched.id, matched.media_type)
+            except Exception as e:
+                print(f"get_stream error: {e}")
+                result = None
+        if result and result.url:
+            url = select_quality(result.url, quality)
+            return (url, result.subtitles, {})
     else:
         # FlixHQ: try selected ID directly, then search by title
         media_id = getattr(selected, "id", None)
@@ -238,13 +296,6 @@ def run(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     source_choice = _pick_source()
-
-    source_label = "480p" if source_choice == "lk21" else "720p+"
-    title = selected.title
-    year = getattr(selected, "year", "")
-    if year and title.endswith(f" ({year})"):
-        title = title[: -len(f" ({year})")]
-    print(f"Playing: {title} ({year}) via {source_label}")
 
     stream = _get_stream(selected, config.quality, source_choice)
     if not stream:
