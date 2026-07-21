@@ -123,7 +123,12 @@ def _play(stream_url: str, title: str, subtitles: list[str], config, headers: di
             pass
 
     try:
-        mpv_cmd = ["mpv", stream_url, f"--force-media-title={title}"]
+        mpv_cmd = [
+            "mpv", stream_url,
+            "--vo=gpu-next",
+            "--profile=high-quality",
+            f"--force-media-title={title}",
+        ]
         for sub in local_subs:
             mpv_cmd += ["--sub-file=" + sub]
         if headers:
