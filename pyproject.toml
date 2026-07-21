@@ -14,7 +14,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-lk21 = ["playwright"]
+full = ["playwright"]
 dev = ["pytest", "ruff"]
 
 [project.scripts]

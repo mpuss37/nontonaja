@@ -9,7 +9,6 @@ from bs4 import BeautifulSoup
 
 BASE_URL = "https://tv12.lk21official.cc"
 P2P_API = "https://cloud.hownetwork.xyz/api2.php"
-HYDRAX_FAKE_ID = "81347747"
 
 
 @dataclass
@@ -94,11 +93,28 @@ def browse(page: str = "populer") -> list[LK21Result]:
 
 
 def search(query: str) -> list[LK21Result]:
-    """Search LK21 via playwright (JS-rendered search page)."""
-    from .browser import run_async, _get_browser
+    """Search LK21. Uses playwright if available, falls back to browse pages."""
+    # Try playwright first (fast, full results)
+    try:
+        return _search_playwright(query)
+    except Exception:
+        pass
 
-    async def _search():
-        browser = await _get_browser()
+    # Fallback: browse populer + latest, filter by query
+    return _search_browse(query)
+
+
+def _search_playwright(query: str) -> list[LK21Result]:
+    """Search via playwright (JS-rendered search page)."""
+    from playwright.async_api import async_playwright
+
+    async def _do_search():
+        pw = await async_playwright().start()
+        browser = await pw.chromium.launch(
+            headless=True,
+            executable_path="/usr/bin/chromium",
+            args=["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"],
+        )
         page = await browser.new_page()
         try:
             url = f"{BASE_URL}/search?s={query.replace(' ', '+')}"
@@ -120,12 +136,28 @@ def search(query: str) -> list[LK21Result]:
             return results
         finally:
             await page.close()
+            await browser.close()
+            await pw.stop()
 
-    return run_async(_search())
+    return asyncio.run(_do_search())
 
 
-def _extract_player_urls(slug: str) -> list[str] | None:
-    """Fetch detail page and return all player embed URLs."""
+def _search_browse(query: str) -> list[LK21Result]:
+    """Fallback search: browse populer + latest, filter by query."""
+    query_lower = query.lower()
+    all_results = browse("populer") + browse("latest")
+
+    seen = set()
+    results = []
+    for r in all_results:
+        if query_lower in r.title.lower() and r.id not in seen:
+            seen.add(r.id)
+            results.append(r)
+    return results
+
+
+def get_p2p_stream(slug: str) -> StreamResult | None:
+    """Get P2P stream from LK21 movie."""
     client = _get_client()
     resp = client.get(f"{BASE_URL}/{slug}")
 
@@ -137,12 +169,6 @@ def _extract_player_urls(slug: str) -> list[str] | None:
         return None
 
     player_urls = re.findall(r'data-url="([^"]+)"', html)
-    return player_urls if player_urls else None
-
-
-def get_p2p_stream(slug: str) -> StreamResult | None:
-    """Get P2P stream from LK21 movie."""
-    player_urls = _extract_player_urls(slug)
     if not player_urls:
         return None
 
@@ -155,36 +181,13 @@ def get_p2p_stream(slug: str) -> StreamResult | None:
         if match2:
             vid = match2.group(1)
         if vid:
-            return _get_p2p_stream(vid)
+            return _call_p2p_api(vid)
 
     return None
 
 
-def get_hydrax_stream(slug: str) -> StreamResult | None:
-    """Get hydrax stream from LK21 movie by slug.
-
-    1. Fetch detail page → extract hydrax vid
-    2. Open abyssplayer.com → wait for JWPlayer
-    3. Download via frame fetch → return local file
-    """
-    player_urls = _extract_player_urls(slug)
-    if not player_urls:
-        return None
-
-    for purl in player_urls:
-        match = re.search(r"hydrax/([^/\s]+)", purl)
-        if match:
-            result = _get_hydrax_stream_vid(match.group(1))
-            if result:
-                return result
-
-    return None
-
-
-def _get_p2p_stream(vid: str) -> StreamResult | None:
-    """Call hownetwork API to get HLS stream URL."""
+def _call_p2p_api(vid: str) -> StreamResult | None:
     client = _get_client()
-
     referer = f"{BASE_URL}/"
     try:
         resp = client.post(
@@ -207,57 +210,3 @@ def _get_p2p_stream(vid: str) -> StreamResult | None:
         pass
 
     return None
-
-
-def _get_hydrax_stream_vid(vid: str) -> StreamResult | None:
-    """Get stream from hydrax via playwright frame fetch.
-
-    Returns None if hydrax serves fake content (Big Buck Bunny).
-    """
-    try:
-        from .browser import (
-            run_async, _get_browser,
-            download_via_frame, find_player_frame, get_video_url_from_frame,
-        )
-    except ImportError:
-        return None
-
-    async def _extract():
-        browser = await _get_browser()
-        page = await browser.new_page()
-
-        try:
-            embed_url = f"https://abyssplayer.com/{vid}"
-            await page.goto(embed_url, wait_until="domcontentloaded", timeout=15000)
-            await asyncio.sleep(10)
-
-            frame = await find_player_frame(page)
-            if not frame:
-                return None
-
-            video_url = await get_video_url_from_frame(frame)
-            if not video_url:
-                return None
-
-            # Check for fake content
-            if HYDRAX_FAKE_ID in video_url:
-                return None
-
-            # Download to local file via frame fetch
-            import tempfile
-            import os
-            local_path = tempfile.mktemp(suffix=".mp4", prefix="nontonaja-lk21-")
-            await download_via_frame(video_url, frame, local_path)
-
-            if os.path.getsize(local_path) < 1024 * 1024:
-                os.unlink(local_path)
-                return None
-
-            return StreamResult(url=local_path, source="hydrax")
-
-        except Exception:
-            return None
-        finally:
-            await page.close()
-
-    return run_async(_extract())
