@@ -125,8 +125,8 @@ def _play(stream_url: str, title: str, subtitles: list[str], config, headers: di
     try:
         mpv_cmd = [
             "mpv", stream_url,
-            "--vo=gpu-next",
             "--profile=high-quality",
+            "--msg-level=vo=v",
             f"--force-media-title={title}",
         ]
         for sub in local_subs:
