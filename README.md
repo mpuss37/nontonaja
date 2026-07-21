@@ -10,7 +10,7 @@ cd nontonaja
 python -m venv .venv
 .venv/bin/pip install -e .
 
-# Install playwright untuk LK21
+# Optional: install chromium untuk search lebih lengkap
 .venv/bin/playwright install chromium
 ```
 
@@ -21,7 +21,7 @@ python -m venv .venv
 | `mpv` | Player utama |
 | `fzf` | Selection menu |
 | `ffmpeg` | Download |
-| `chromium` | LK21 search (playwright) |
+| `chromium` | Search (playwright, optional) |
 
 ## Cara Pakai
 
@@ -42,20 +42,20 @@ nontonaja -d /path/to/dir "spider-man"
 ### Flow
 
 ```
-1. Search film dari LK21 + FlixHQ (digabung)
+1. Search film dari multiple source (digabung)
 2. Pilih film dari daftar
 3. Pilih source:
-   1. 480p (sub-indo)   → LK21 P2P
-   2. 720p+ (nonsub)    → FlixHQ
-4. Putar via mpv
+   1. 480p (sub-indo)
+   2. 720p+ (nonsub)
+4. Putar via mpv dengan upscaling (gpu-next + high-quality)
 ```
 
 ## Sumber
 
 | Source | Quality | Subtitle | Kecepatan |
 |--------|---------|----------|-----------|
-| LK21 (P2P) | 480p | Ya | Cepat |
-| FlixHQ | Multi (720p-1080p) | Ya | Sedang |
+| P2P | 480p | Ya | Cepat |
+| Multi-source | 720p-1080p | Ya | Sedang |
 
 ## Struktur Project
 
@@ -74,10 +74,8 @@ nontonaja/
     ├── launcher.py           # fzf/rofi wrapper
     ├── quality.py            # M3U8 quality selection
     ├── providers/
-    │   ├── flixhq.py         # FlixHQ scraper
-    │   ├── lk21.py           # LK21 scraper + P2P
-    │   ├── browser.py        # Playwright wrapper
-    │   └── decoder.py        # Stream decoder
+    │   ├── flixhq.py         # Web scraper
+    │   └── lk21.py           # P2P stream provider
     └── players/
         ├── mpv.py
         ├── vlc.py

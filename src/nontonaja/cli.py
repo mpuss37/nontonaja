@@ -208,11 +208,12 @@ def run(args: argparse.Namespace) -> None:
 
     source_choice = _pick_source()
 
-    print(f"Playing: {selected.title} ({getattr(selected, 'year', '')}) via {source_choice.upper()}")
+    source_label = "480p" if source_choice == "lk21" else "720p+"
+    print(f"Playing: {selected.title} ({getattr(selected, 'year', '')}) via {source_label}")
 
     stream = _get_stream(selected, config.quality, source_choice)
     if not stream:
-        print(f"No stream found on {source_choice.upper()}.")
+        print(f"No stream found.")
         sys.exit(1)
 
     stream_url, subtitles, headers = stream
