@@ -1,0 +1,5 @@
+player = "mpv"
+provider = "Vidcloud"
+subs_language = "English"
+download = "."
+history = false

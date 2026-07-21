@@ -1,0 +1,27 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "nontonaja"
+version = "0.1.0"
+description = "A CLI media streaming tool"
+requires-python = ">=3.10"
+dependencies = [
+    "httpx[socks]",
+    "beautifulsoup4",
+    "lxml",
+]
+
+[project.optional-dependencies]
+lk21 = ["playwright"]
+dev = ["pytest", "ruff"]
+
+[project.scripts]
+nontonaja = "nontonaja.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/nontonaja"]
+
+[tool.ruff]
+line-length = 100
