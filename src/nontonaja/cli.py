@@ -156,17 +156,19 @@ def _get_stream(selected, quality, source_choice) -> tuple[str, list[str], dict]
             except Exception:
                 results = []
             matched = None
-            title_lower = re.sub(r"\s*\(\d{4}\)$", "", selected.title).lower().strip()
+            title_norm = re.sub(r"\s*\(\d{4}\)$", "", selected.title).lower().strip()
+            title_words = set(title_norm.split())
+            best_score = 0
             for r in results:
-                if re.sub(r"\s*\(\d{4}\)$", "", r.title).lower().strip() == title_lower:
+                rt = re.sub(r"\s*\(\d{4}\)$", "", r.title).lower().strip()
+                if rt == title_norm:
                     matched = r
                     break
-            if not matched:
-                for r in results:
-                    rt = re.sub(r"\s*\(\d{4}\)$", "", r.title).lower().strip()
-                    if title_lower in rt or rt in title_lower:
-                        matched = r
-                        break
+                rt_words = set(rt.split())
+                score = len(title_words & rt_words) / max(len(title_words), 1)
+                if score > best_score and score >= 0.5:
+                    best_score = score
+                    matched = r
             if not matched:
                 return None
             result = lk21.get_p2p_stream(matched.id)
@@ -189,17 +191,19 @@ def _get_stream(selected, quality, source_choice) -> tuple[str, list[str], dict]
                 results = []
 
             matched = None
-            title_lower = re.sub(r"\s*\(\d{4}\)$", "", selected.title).lower().strip()
+            title_norm = re.sub(r"\s*\(\d{4}\)$", "", selected.title).lower().strip()
+            title_words = set(title_norm.split())
+            best_score = 0
             for r in results:
-                if re.sub(r"\s*\(\d{4}\)$", "", r.title).lower().strip() == title_lower:
+                rt = re.sub(r"\s*\(\d{4}\)$", "", r.title).lower().strip()
+                if rt == title_norm:
                     matched = r
                     break
-            if not matched:
-                for r in results:
-                    rt = re.sub(r"\s*\(\d{4}\)$", "", r.title).lower().strip()
-                    if title_lower in rt or rt in title_lower:
-                        matched = r
-                        break
+                rt_words = set(rt.split())
+                score = len(title_words & rt_words) / max(len(title_words), 1)
+                if score > best_score and score >= 0.5:
+                    best_score = score
+                    matched = r
             if not matched:
                 return None
 
