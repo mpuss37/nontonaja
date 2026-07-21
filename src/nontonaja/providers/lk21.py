@@ -92,8 +92,47 @@ def browse(page: str = "populer") -> list[LK21Result]:
 
 
 def search(query: str) -> list[LK21Result]:
-    """Search LK21 via browse pages, filter by query."""
-    return _search_browse(query)
+    """Search LK21 via JSON API, fallback to browse pages."""
+    client = _get_client()
+    try:
+        # Get API base URL from search page
+        resp = client.get(f"{BASE_URL}/search", params={"s": query})
+        if resp.status_code != 200:
+            return _search_browse(query)
+        soup = _soup(resp.text)
+        body = soup.select_one("body")
+        api_base = body.get("data-search_url", "") if body else ""
+        if not api_base:
+            return _search_browse(query)
+
+        # Call JSON API
+        api_resp = client.get(
+            f"{api_base.rstrip('/')}/search.php",
+            params={"s": query, "page": 1},
+            headers={
+                "Referer": f"{BASE_URL}/search?s={query.replace(' ', '+')}",
+                "X-Requested-With": "XMLHttpRequest",
+                "Accept": "application/json",
+            },
+        )
+        if api_resp.status_code != 200:
+            return _search_browse(query)
+
+        data = api_resp.json()
+        items = data.get("data", [])
+        return [
+            LK21Result(
+                id=item["slug"],
+                title=item["title"],
+                year=str(item.get("year", "")),
+                image="",
+                media_type="tv" if item.get("type") == "series" else "movie",
+            )
+            for item in items
+            if item.get("slug")
+        ]
+    except Exception:
+        return _search_browse(query)
 
 
 def _search_browse(query: str) -> list[LK21Result]:

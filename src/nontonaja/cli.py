@@ -28,11 +28,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _pick(results):
     for i, r in enumerate(results, 1):
-        src = getattr(r, "source", "?").upper()
         year = getattr(r, "year", "")
         mtype = getattr(r, "media_type", "?")
+        title = r.title
+        # Strip year from title if already present to avoid duplication
+        if year and title.endswith(f" ({year})"):
+            title = title[: -len(f" ({year})")]
         label = f" ({year})" if year else ""
-        print(f"  {i}. {r.title}{label} [{mtype}] [{src}]")
+        print(f"  {i}. {title}{label} [{mtype}]")
     try:
         choice = int(input("Pilih: ")) - 1
         return results[choice]
@@ -78,7 +81,7 @@ def _search(query: str) -> list:
     seen = set()
     lk21_dedup = []
     for r in lk21_results:
-        key = r.title.lower().strip()
+        key = re.sub(r"\s*\(\d{4}\)$", "", r.title).lower().strip()
         if key not in seen:
             seen.add(key)
             lk21_dedup.append(r)
@@ -89,9 +92,10 @@ def _search(query: str) -> list:
         flixhq_results = []
 
     merged = list(lk21_dedup)
-    lk21_titles = {r.title.lower().strip() for r in lk21_dedup}
+    lk21_titles = {re.sub(r"\s*\(\d{4}\)$", "", r.title).lower().strip() for r in lk21_dedup}
     for r in flixhq_results:
-        if r.title.lower().strip() not in lk21_titles:
+        key = re.sub(r"\s*\(\d{4}\)$", "", r.title).lower().strip()
+        if key not in lk21_titles:
             merged.append(r)
 
     def _sort_key(r):
@@ -142,7 +146,30 @@ def _play(stream_url: str, title: str, subtitles: list[str], headers: dict | Non
 def _get_stream(selected, quality, source_choice) -> tuple[str, list[str], dict] | None:
     """Get stream from chosen source."""
     if source_choice == "lk21":
-        result = lk21.get_p2p_stream(selected.id)
+        source = getattr(selected, "source", "")
+        if source == "lk21":
+            result = lk21.get_p2p_stream(selected.id)
+        else:
+            # Cross-source: search LK21 by title
+            try:
+                results = lk21.search(selected.title)
+            except Exception:
+                results = []
+            matched = None
+            title_lower = selected.title.lower().strip()
+            for r in results:
+                if r.title.lower().strip() == title_lower:
+                    matched = r
+                    break
+            if not matched:
+                for r in results:
+                    rt = r.title.lower().strip()
+                    if title_lower in rt or rt in title_lower:
+                        matched = r
+                        break
+            if not matched:
+                return None
+            result = lk21.get_p2p_stream(matched.id)
         if result and result.url:
             url = select_quality(result.url, quality, headers=result.headers)
             return (url, result.subtitles, result.headers)
