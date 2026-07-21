@@ -156,14 +156,14 @@ def _get_stream(selected, quality, source_choice) -> tuple[str, list[str], dict]
             except Exception:
                 results = []
             matched = None
-            title_lower = selected.title.lower().strip()
+            title_lower = re.sub(r"\s*\(\d{4}\)$", "", selected.title).lower().strip()
             for r in results:
-                if r.title.lower().strip() == title_lower:
+                if re.sub(r"\s*\(\d{4}\)$", "", r.title).lower().strip() == title_lower:
                     matched = r
                     break
             if not matched:
                 for r in results:
-                    rt = r.title.lower().strip()
+                    rt = re.sub(r"\s*\(\d{4}\)$", "", r.title).lower().strip()
                     if title_lower in rt or rt in title_lower:
                         matched = r
                         break
@@ -189,14 +189,14 @@ def _get_stream(selected, quality, source_choice) -> tuple[str, list[str], dict]
                 results = []
 
             matched = None
-            title_lower = selected.title.lower().strip()
+            title_lower = re.sub(r"\s*\(\d{4}\)$", "", selected.title).lower().strip()
             for r in results:
-                if r.title.lower().strip() == title_lower:
+                if re.sub(r"\s*\(\d{4}\)$", "", r.title).lower().strip() == title_lower:
                     matched = r
                     break
             if not matched:
                 for r in results:
-                    rt = r.title.lower().strip()
+                    rt = re.sub(r"\s*\(\d{4}\)$", "", r.title).lower().strip()
                     if title_lower in rt or rt in title_lower:
                         matched = r
                         break
@@ -236,7 +236,11 @@ def run(args: argparse.Namespace) -> None:
     source_choice = _pick_source()
 
     source_label = "480p" if source_choice == "lk21" else "720p+"
-    print(f"Playing: {selected.title} ({getattr(selected, 'year', '')}) via {source_label}")
+    title = selected.title
+    year = getattr(selected, "year", "")
+    if year and title.endswith(f" ({year})"):
+        title = title[: -len(f" ({year})")]
+    print(f"Playing: {title} ({year}) via {source_label}")
 
     stream = _get_stream(selected, config.quality, source_choice)
     if not stream:
