@@ -148,6 +148,10 @@ def _play(stream_url: str, title: str, subtitles: list[str], headers: dict | Non
             "--profile=high-quality",
             "--msg-level=vo=v",
             f"--force-media-title={title}",
+            "--hr-seek-framedrop=no",
+            "--cache=yes",
+            "--demuxer-max-bytes=50M",
+            "--demuxer-readahead-secs=30",
         ]
         for sub in local_subs:
             mpv_cmd += ["--sub-file=" + sub]
