@@ -111,11 +111,17 @@ def _claim(content_id: str, content_type: str) -> dict | None:
     if claim.get("kind") == "pentos":
         return claim
 
+    # Try immediate second claim (skip ad wait)
+    r2 = client.post(f"{API_BASE}/watch/session/claim", json={"gateToken": gate_token}, headers=h)
+    if r2.status_code == 200 and r2.json().get("kind") == "pentos":
+        return r2.json()
+
+    # Fallback: wait full countdown
     wait_s = (claim.get("unlockAt", 0) - claim.get("serverNow", 0)) / 1000
     _countdown(int(max(wait_s, 0)) + 1)
 
-    r = client.post(f"{API_BASE}/watch/session/claim", json={"gateToken": gate_token}, headers=h)
-    return r.json() if r.status_code == 200 else None
+    r3 = client.post(f"{API_BASE}/watch/session/claim", json={"gateToken": gate_token}, headers=h)
+    return r3.json() if r3.status_code == 200 else None
 
 
 def _redeem(pentos: dict) -> StreamResult | None:
