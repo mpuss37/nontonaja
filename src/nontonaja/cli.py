@@ -303,21 +303,20 @@ def _get_stream(selected, quality, source_choice) -> tuple[str, list[str], dict]
 
         if result and result.url:
             url = select_quality(result.url, quality)
-            # Always fetch IDLIX subtitles (sub Indo)
-            subs = result.subtitles
-            if not subs:
-                try:
-                    idlix_results = idlix.search(selected.title)
-                    title_norm2 = re.sub(r"\s*\(\d{4}\)$", "", selected.title).lower().strip()
-                    for ir in idlix_results:
-                        rt2 = re.sub(r"\s*\(\d{4}\)$", "", ir.title).lower().strip()
-                        if rt2 == title_norm2 or title_norm2 in rt2 or rt2 in title_norm2:
-                            idlix_stream = idlix.get_stream(ir.id, ir.media_type, selected.title)
-                            if idlix_stream and idlix_stream.subtitles:
-                                subs = idlix_stream.subtitles
-                                break
-                except Exception:
-                    pass
+            # Always use IDLIX subtitles (sub Indo) instead of FlixHQ
+            subs = []
+            try:
+                idlix_results = idlix.search(selected.title)
+                title_norm2 = re.sub(r"\s*\(\d{4}\)$", "", selected.title).lower().strip()
+                for ir in idlix_results:
+                    rt2 = re.sub(r"\s*\(\d{4}\)$", "", ir.title).lower().strip()
+                    if rt2 == title_norm2 or title_norm2 in rt2 or rt2 in title_norm2:
+                        idlix_stream = idlix.get_stream(ir.id, ir.media_type, selected.title)
+                        if idlix_stream and idlix_stream.subtitles:
+                            subs = idlix_stream.subtitles
+                            break
+            except Exception:
+                pass
             return (url, subs, {})
 
     return None
