@@ -165,6 +165,7 @@ def _play(stream_url: str, title: str, subtitles: list[str], headers: dict | Non
         mpv_cmd = [
             "mpv", local_stream,
             f"--force-media-title={title}",
+            "--no-ytdl",
             "--cache=yes",
             "--demuxer-max-bytes=50M",
             "--demuxer-readahead-secs=30",
