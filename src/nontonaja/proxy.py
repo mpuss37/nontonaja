@@ -22,7 +22,7 @@ class _Handler(BaseHTTPRequestHandler):
         path = self.path.lstrip("/")
         if path == "playlist.m3u8":
             self._serve_playlist()
-        elif path == "init.mp4":
+        elif path in ("init.mp4", "init.ts"):
             self._serve_url(self.server.init_url)
         elif path.startswith("seg/"):
             try:
@@ -83,7 +83,7 @@ def _rewrite_m3u8(text: str, port: int) -> tuple[str, str, dict[int, str]]:
         elif line.startswith("http"):
             idx = len(seg_map)
             seg_map[idx] = line.strip()
-            new_lines.append(f"http://127.0.0.1:{port}/seg/{idx}.mp4")
+            new_lines.append(f"http://127.0.0.1:{port}/seg/{idx}.ts")
         else:
             new_lines.append(line)
 
@@ -108,38 +108,37 @@ def start_proxy(master_url: str) -> tuple[str, ProxyServer]:
     """
     client = httpx.Client(verify=False, follow_redirects=True, timeout=15)
 
-    # Fetch master playlist
+    # Fetch playlist
     resp = client.get(master_url)
-    master_text = resp.text
+    playlist_text = resp.text
 
-    # Find sub-playlist URL (usually the second URL in master)
-    sub_url = ""
-    for line in master_text.split("\n"):
-        if line.startswith("http") and "config" not in line:
-            sub_url = line.strip()
-            break
-        elif line.startswith("/v/"):
-            parsed = urlparse(master_url)
-            sub_url = f"{parsed.scheme}://{parsed.netloc}{line.strip()}"
-            break
+    # Check if this is a master playlist (has #EXT-X-STREAM-INF) or sub-playlist
+    if "#EXT-X-STREAM-INF" in playlist_text:
+        # Master playlist — find highest quality sub-playlist
+        from urllib.parse import urljoin
+        import re as _re
+        lines = playlist_text.split("\n")
+        best_bw = 0
+        sub_url = ""
+        for i, line in enumerate(lines):
+            match = _re.match(r"#EXT-X-STREAM-INF:(.*)", line)
+            if match and i + 1 < len(lines):
+                bw_match = _re.search(r"BANDWIDTH=(\d+)", match.group(1))
+                bw = int(bw_match.group(1)) if bw_match else 0
+                candidate = lines[i + 1].strip()
+                if candidate and not candidate.startswith("#") and bw > best_bw:
+                    best_bw = bw
+                    sub_url = urljoin(master_url, candidate)
 
-    if not sub_url:
-        # Try first URL
-        for line in master_text.split("\n"):
-            if line.startswith("http") or line.startswith("/v/"):
-                if line.startswith("/v/"):
-                    parsed = urlparse(master_url)
-                    sub_url = f"{parsed.scheme}://{parsed.netloc}{line.strip()}"
-                else:
-                    sub_url = line.strip()
-                break
+        if not sub_url:
+            raise ValueError("No sub-playlist found in master m3u8")
 
-    if not sub_url:
-        raise ValueError("No sub-playlist found in master m3u8")
-
-    # Fetch sub-playlist
-    resp2 = client.get(sub_url)
-    sub_text = resp2.text
+        # Fetch sub-playlist
+        resp2 = client.get(sub_url)
+        sub_text = resp2.text
+    else:
+        # Already a sub-playlist
+        sub_text = playlist_text
 
     # Rewrite
     server = ProxyServer(("127.0.0.1", _PORT), _Handler, "", "", {})

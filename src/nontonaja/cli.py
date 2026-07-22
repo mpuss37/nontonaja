@@ -137,7 +137,9 @@ def _play(stream_url: str, title: str, subtitles: list[str], headers: dict | Non
     try:
         from .proxy import start_proxy
         local_stream, proxy_server = start_proxy(stream_url)
-    except Exception:
+        print(f"proxy ready: {local_stream}")
+    except Exception as e:
+        print(f"proxy failed: {e}")
         # Fallback: save m3u8 locally
         try:
             resp = client.get(stream_url)
@@ -261,7 +263,8 @@ def _get_stream(selected, quality, source_choice) -> tuple[str, list[str], dict]
                 print(f"get_stream error: {e}")
                 result = None
         if result and result.url:
-            url = select_quality(result.url, quality)
+            # IDLIX: pass master URL directly to proxy (proxy handles quality selection)
+            url = result.url
             return (url, result.subtitles, {})
     else:
         # FlixHQ: try selected ID directly, then search by title
