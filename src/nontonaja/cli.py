@@ -306,7 +306,21 @@ def _get_stream(selected, quality, source_choice) -> tuple[str, list[str], dict]
 
         if result and result.url:
             url = select_quality(result.url, quality)
-            return (url, result.subtitles, {})
+            # Add IDLIX subtitles (sub Indo) to FlixHQ
+            subs = list(result.subtitles)
+            try:
+                idlix_results = idlix.search(selected.title)
+                title_norm2 = re.sub(r"\s*\(\d{4}\)$", "", selected.title).lower().strip()
+                for ir in idlix_results:
+                    rt2 = re.sub(r"\s*\(\d{4}\)$", "", ir.title).lower().strip()
+                    if rt2 == title_norm2 or title_norm2 in rt2 or rt2 in title_norm2:
+                        idlix_stream = idlix.get_stream(ir.id, ir.media_type, selected.title)
+                        if idlix_stream and idlix_stream.subtitles:
+                            subs.extend(idlix_stream.subtitles)
+                            break
+            except Exception:
+                pass
+            return (url, subs, {})
 
     return None
 
