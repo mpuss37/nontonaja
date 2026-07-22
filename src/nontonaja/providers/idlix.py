@@ -64,12 +64,13 @@ def _headers() -> dict:
     return {"User-Agent": UA, "Content-Type": "application/json"}
 
 
-def _countdown(seconds: int) -> None:
+def _countdown(seconds: int, title: str = "") -> None:
     for remaining in range(seconds, 0, -1):
-        sys.stdout.write(f"\rwaiting {remaining}s for ad... ")
+        sys.stdout.write(f"\rwaiting {remaining}s... ")
         sys.stdout.flush()
         time.sleep(1)
-    sys.stdout.write("\rstream ready!              \n")
+    label = f"{title} " if title else ""
+    sys.stdout.write(f"\r{label}stream ready, wait :)          \n")
 
 
 def search(query: str) -> list[SearchResult]:
@@ -92,7 +93,7 @@ def search(query: str) -> list[SearchResult]:
     return results
 
 
-def _claim(content_id: str, content_type: str) -> dict | None:
+def _claim(content_id: str, content_type: str, title: str = "") -> dict | None:
     client = _get_client()
     h = _headers()
 
@@ -118,7 +119,7 @@ def _claim(content_id: str, content_type: str) -> dict | None:
 
     # Fallback: wait full countdown
     wait_s = (claim.get("unlockAt", 0) - claim.get("serverNow", 0)) / 1000
-    _countdown(int(max(wait_s, 0)) + 1)
+    _countdown(int(max(wait_s, 0)) + 1, title)
 
     r3 = client.post(f"{API_BASE}/watch/session/claim", json={"gateToken": gate_token}, headers=h)
     return r3.json() if r3.status_code == 200 else None
@@ -141,7 +142,7 @@ def _redeem(pentos: dict) -> StreamResult | None:
     return StreamResult(url=m3u8_url, subtitles=subtitles)
 
 
-def get_stream(content_id: str, content_type: str = "movie") -> StreamResult | None:
+def get_stream(content_id: str, content_type: str = "movie", title: str = "") -> StreamResult | None:
     _load_tokens()
 
     cached = _renewal_tokens.get(content_id)
@@ -153,7 +154,7 @@ def get_stream(content_id: str, content_type: str = "movie") -> StreamResult | N
             _save_tokens()
             return _redeem(pentos)
 
-    pentos = _claim(content_id, content_type)
+    pentos = _claim(content_id, content_type, title)
     if not pentos or pentos.get("kind") != "pentos":
         return None
 
