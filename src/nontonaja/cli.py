@@ -50,12 +50,12 @@ def _pick_source():
     try:
         choice = int(input("Source: "))
         if choice == 1:
-            return "lk21"
+            return "lk21", None
         elif choice == 3:
-            return "idlix"
-        return "flixhq"
+            return "flixhq", 1080
+        return "flixhq", None
     except (ValueError):
-        return "flixhq"
+        return "flixhq", None
 
 
 def _flixhq_query(title: str) -> str:
@@ -346,9 +346,10 @@ def run(args: argparse.Namespace) -> None:
         print("Invalid choice.")
         sys.exit(1)
 
-    source_choice = _pick_source()
+    source_choice, quality_override = _pick_source()
+    quality = quality_override or config.quality
 
-    stream = _get_stream(selected, config.quality, source_choice)
+    stream = _get_stream(selected, quality, source_choice)
     if not stream:
         print(f"No stream found.")
         sys.exit(1)
