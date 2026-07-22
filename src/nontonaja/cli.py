@@ -129,19 +129,25 @@ def _search(query: str) -> list:
 def _play(stream_url: str, title: str, subtitles: list[str], headers: dict | None = None) -> None:
     sub_dir = tempfile.mkdtemp(prefix="nontonaja-subs-")
     local_subs = []
+    proxy_server = None
     client = httpx.Client(verify=False, follow_redirects=True, timeout=15)
 
-    # Fetch m3u8 to local file — avoids .json extension probing by ffmpeg
+    # Start local proxy for IDLIX streams (rewrites .jpg/.css extensions to .mp4)
     local_stream = stream_url
     try:
-        resp = client.get(stream_url)
-        if resp.status_code == 200 and "#EXTM3U" in resp.text[:100]:
-            m3u8_path = os.path.join(sub_dir, "stream.m3u8")
-            with open(m3u8_path, "w") as f:
-                f.write(resp.text)
-            local_stream = m3u8_path
+        from .proxy import start_proxy
+        local_stream, proxy_server = start_proxy(stream_url)
     except Exception:
-        pass
+        # Fallback: save m3u8 locally
+        try:
+            resp = client.get(stream_url)
+            if resp.status_code == 200 and "#EXTM3U" in resp.text[:100]:
+                m3u8_path = os.path.join(sub_dir, "stream.m3u8")
+                with open(m3u8_path, "w") as f:
+                    f.write(resp.text)
+                local_stream = m3u8_path
+        except Exception:
+            pass
 
     for sub_url in subtitles:
         try:
@@ -172,6 +178,8 @@ def _play(stream_url: str, title: str, subtitles: list[str], headers: dict | Non
                 mpv_cmd += [f"--user-agent={headers['User-Agent']}"]
         subprocess.run(mpv_cmd)
     finally:
+        if proxy_server:
+            proxy_server.shutdown()
         shutil.rmtree(sub_dir, ignore_errors=True)
 
 
