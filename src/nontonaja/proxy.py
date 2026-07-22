@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse
 
 import httpx
@@ -90,7 +90,7 @@ def _rewrite_m3u8(text: str, port: int) -> tuple[str, str, dict[int, str]]:
     return "\n".join(new_lines), init_url, seg_map
 
 
-class ProxyServer(HTTPServer):
+class ProxyServer(ThreadingHTTPServer):
     allow_reuse_address = True
 
     def __init__(self, address, handler, playlist: str, init_url: str, seg_map: dict):
@@ -98,7 +98,10 @@ class ProxyServer(HTTPServer):
         self.playlist_data = playlist
         self.init_url = init_url
         self.seg_map = seg_map
-        self.httpx_client = httpx.Client(verify=False, follow_redirects=True, timeout=30)
+        self.httpx_client = httpx.Client(
+            verify=False, follow_redirects=True, timeout=30,
+            limits=httpx.Limits(max_connections=20, max_keepalive_connections=10)
+        )
 
 
 def start_proxy(master_url: str) -> tuple[str, ProxyServer]:
