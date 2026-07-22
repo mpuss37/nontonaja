@@ -44,9 +44,9 @@ def _pick(results):
 
 
 def _pick_source():
-    print("  1. 480p (sub-indo)")
-    print("  2. 720p+ (nonsub)")
-    print("  3. 1080p (subtitle)")
+    print("  1. 480p")
+    print("  2. 720p")
+    print("  3. 1080p")
     try:
         choice = int(input("Source: "))
         if choice == 1:
@@ -303,8 +303,8 @@ def _get_stream(selected, quality, source_choice) -> tuple[str, list[str], dict]
 
         if result and result.url:
             url = select_quality(result.url, quality)
-            # Always use IDLIX subtitles (sub Indo) instead of FlixHQ
-            subs = []
+            # Keep FlixHQ subs + append IDLIX subtitles (sub Indo)
+            subs = list(result.subtitles)
             try:
                 idlix_results = idlix.search(selected.title)
                 title_norm2 = re.sub(r"\s*\(\d{4}\)$", "", selected.title).lower().strip()
@@ -313,7 +313,7 @@ def _get_stream(selected, quality, source_choice) -> tuple[str, list[str], dict]
                     if rt2 == title_norm2 or title_norm2 in rt2 or rt2 in title_norm2:
                         idlix_stream = idlix.get_stream(ir.id, ir.media_type, selected.title)
                         if idlix_stream and idlix_stream.subtitles:
-                            subs = idlix_stream.subtitles
+                            subs.extend(idlix_stream.subtitles)
                             break
             except Exception:
                 pass
@@ -358,6 +358,11 @@ def run(args: argparse.Namespace) -> None:
         download(stream_url, download_dir, selected.title, subtitles, config.subs_language)
         return
 
+    title = selected.title
+    year = getattr(selected, "year", "")
+    if year and title.endswith(f" ({year})"):
+        title = title[: -len(f" ({year})")]
+    print(f"{title} stream ready, wait :)")
     _play(stream_url, selected.title, subtitles, headers=headers)
 
 
