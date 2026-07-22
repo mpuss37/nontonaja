@@ -180,6 +180,9 @@ def _play(stream_url: str, title: str, subtitles: list[str], headers: dict | Non
                 mpv_cmd += [f"--http-header-fields={k}: {v}"]
             if "User-Agent" in headers:
                 mpv_cmd += [f"--user-agent={headers['User-Agent']}"]
+        # Show stream ready message for non-IDLIX sources (IDLIX shows its own after countdown)
+        if not local_stream.startswith("http://127.0.0.1:"):
+            print(f"{title} stream ready, wait :)")
         subprocess.run(mpv_cmd)
     finally:
         if proxy_server:
@@ -344,11 +347,6 @@ def run(args: argparse.Namespace) -> None:
         download(stream_url, download_dir, selected.title, subtitles, config.subs_language)
         return
 
-    title = selected.title
-    year = getattr(selected, "year", "")
-    if year and title.endswith(f" ({year})"):
-        title = title[: -len(f" ({year})")]
-    print(f"{title} stream ready, wait :)")
     _play(stream_url, selected.title, subtitles, headers=headers)
 
 
