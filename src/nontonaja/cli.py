@@ -130,6 +130,19 @@ def _play(stream_url: str, title: str, subtitles: list[str], headers: dict | Non
     sub_dir = tempfile.mkdtemp(prefix="nontonaja-subs-")
     local_subs = []
     client = httpx.Client(verify=False, follow_redirects=True, timeout=15)
+
+    # Fetch m3u8 to local file — avoids .json extension probing by ffmpeg
+    local_stream = stream_url
+    try:
+        resp = client.get(stream_url)
+        if resp.status_code == 200 and "#EXTM3U" in resp.text[:100]:
+            m3u8_path = os.path.join(sub_dir, "stream.m3u8")
+            with open(m3u8_path, "w") as f:
+                f.write(resp.text)
+            local_stream = m3u8_path
+    except Exception:
+        pass
+
     for sub_url in subtitles:
         try:
             resp = client.get(sub_url)
@@ -144,7 +157,7 @@ def _play(stream_url: str, title: str, subtitles: list[str], headers: dict | Non
 
     try:
         mpv_cmd = [
-            "mpv", stream_url,
+            "mpv", local_stream,
             f"--force-media-title={title}",
             "--cache=yes",
             "--demuxer-max-bytes=50M",
