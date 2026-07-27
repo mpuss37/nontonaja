@@ -1,6 +1,6 @@
 # nontonaja
 
-CLI media streaming tool. Cari film, pilih source, putar langsung lewat terminal.
+CLI media streaming tool. Cari film dari 3 source (LK21, FlixHQ, IDLIX), putar langsung lewat terminal.
 
 ## Instalasi
 
@@ -33,7 +33,10 @@ nontonaja "spider man"
 # Search & play
 nontonaja "spider man"
 nontonaja "avengers"
-nontonaja "batman"
+
+# Pilih quality spesifik
+nontonaja -q 720 "spider man"
+nontonaja -q 1080 "avengers"
 
 # Download
 nontonaja -d "spider man"
@@ -43,7 +46,7 @@ nontonaja -d /path/to/dir "spider man"
 ### Flow
 
 ```
-1. Search film dari LK21 + FlixHQ (merged, deduplicated)
+1. Search film dari LK21 + FlixHQ + IDLIX (merged, deduplicated)
 2. Pilih film dari daftar
 3. Pilih source:
    1. 480p   — LK21 P2P + subtitle
@@ -83,7 +86,7 @@ nontonaja/
 
 ## Config
 
-Buatan `~/.config/nontonaja/config.toml` (opsional):
+Buat `~/.config/nontonaja/config.toml` (opsional):
 
 ```toml
 subs_language = "English"
