@@ -46,9 +46,9 @@ nontonaja -d /path/to/dir "spider man"
 ### Flow
 
 ```
-1. Search film dari LK21 + FlixHQ + IDLIX (merged, deduplicated)
+1. Search film dari LK21 + FlixHQ + IDLIX (merged, deduplicated, diurutkan berdasarkan relevansi query)
 2. Pilih film dari daftar
-3. Pilih source:
+3. Pilih source (hanya menerima opsi 1, 2, atau 3):
    1. 480p   — LK21 P2P + subtitle
    2. 720p   — FlixHQ M3U8 + IDLIX sub Indo
    3. 1080p  — FlixHQ M3U8 + IDLIX sub Indo
