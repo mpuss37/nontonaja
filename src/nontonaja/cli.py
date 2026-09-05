@@ -48,15 +48,18 @@ def _pick_source():
     print("  1. 480p")
     print("  2. 720p")
     print("  3. 1080p")
-    try:
-        choice = int(input("Source: "))
-        if choice == 1:
-            return "lk21", None
-        elif choice == 3:
-            return "flixhq", 1080
-        return "flixhq", None
-    except (ValueError):
-        return "flixhq", None
+    while True:
+        try:
+            choice = int(input("Source: "))
+            if choice == 1:
+                return "lk21", None
+            elif choice == 2:
+                return "flixhq", 720
+            elif choice == 3:
+                return "flixhq", 1080
+            print("Pilihan tidak valid. Silakan pilih 1, 2, atau 3.")
+        except ValueError:
+            print("Input harus berupa angka (1, 2, atau 3).")
 
 
 def _find_flixhq_match(title: str, year: str = "", media_type: str = "movie"):
