@@ -58,22 +58,81 @@ def _pick_source():
         return "flixhq", None
 
 
-def _flixhq_query(title: str) -> str:
-    """Extract core search keyword from a movie title for FlixHQ search.
+def _find_flixhq_match(title: str, media_type: str = "movie"):
+    """Find matching FlixHQ item by testing progressive queries and verifying title/type."""
+    clean = re.sub(r"\s*\(\d{4}\)$", "", title).strip()
+    title_norm = clean.lower()
+    title_words = set(re.findall(r"\w+", title_norm))
+    title_nums = {w for w in title_words if w.isdigit()}
 
-    FlixHQ search only works well with simple 1-2 word queries.
-    Extract the most important franchise/character keyword.
-    """
-    q = re.sub(r"\([^)]*\)", "", title)
-    q = re.sub(r"\d{4}", "", q)
-    q = re.sub(r"[:\-]", " ", q)
+    queries = []
+    # If title has hyphen (e.g. Spider-Man), try hyphenated keyword first
+    hyphen_match = re.match(r"^([\w]+-[\w]+)", clean)
+    if hyphen_match:
+        queries.append(hyphen_match.group(1))
+
+    # Core keywords without parentheses/year/articles
+    q_simple = re.sub(r"\([^)]*\)", "", clean)
+    q_simple = re.sub(r"\d{4}", "", q_simple)
+    q_simple = re.sub(r"[:\-]", " ", q_simple)
     for prefix in ["The ", "A ", "An "]:
-        if q.startswith(prefix):
-            q = q[len(prefix):]
-    words = [w for w in q.split() if len(w) > 2]
-    # Use first word if it's a franchise keyword (Spider, Avengers, Batman, etc.)
-    # Otherwise use first 2 words
-    return words[0] if words else title.split()[0]
+        if q_simple.startswith(prefix):
+            q_simple = q_simple[len(prefix):]
+    words = [w for w in q_simple.split() if len(w) > 2]
+    if len(words) >= 2:
+        queries.append(" ".join(words[:2]))
+    if words:
+        queries.append(words[0])
+    queries.append(clean)
+
+    seen = set()
+    dedup_queries = []
+    for q in queries:
+        if q and q.lower() not in seen:
+            seen.add(q.lower())
+            dedup_queries.append(q)
+
+    best_candidate = None
+    best_score = 0
+
+    for q in dedup_queries:
+        try:
+            results = flixhq.search(q)
+        except Exception:
+            continue
+
+        for r in results:
+            rt = re.sub(r"\s*\(\d{4}\)$", "", r.title).strip().lower()
+            rt_words = set(re.findall(r"\w+", rt))
+            rt_nums = {w for w in rt_words if w.isdigit()}
+            r_type = getattr(r, "media_type", "movie")
+
+            # Exact title + same media type is an instant win
+            if rt == title_norm and r_type == media_type:
+                return r
+            if rt == title_norm and not best_candidate:
+                best_candidate = r
+                best_score = 1.0
+                continue
+
+            # Sequels/numbers must strictly match
+            if title_nums and not (title_nums <= rt_nums):
+                continue
+            if not title_nums and rt_nums:
+                continue
+
+            score = len(title_words & rt_words) / max(len(title_words), 1)
+            if r_type == media_type:
+                score += 0.2
+
+            if score > best_score and score >= 0.7:
+                best_score = score
+                best_candidate = r
+
+        if best_candidate and best_score >= 1.0:
+            return best_candidate
+
+    return best_candidate
 
 
 def _search(query: str) -> list:
@@ -279,28 +338,10 @@ def _get_stream(selected, quality, source_choice) -> tuple[str, list[str], dict]
         if source == "flixhq" and media_id:
             result = flixhq.get_stream(media_id)
         else:
-            # FlixHQ search needs simple queries — extract core keywords
-            search_query = _flixhq_query(selected.title)
-            try:
-                results = flixhq.search(search_query)
-            except Exception:
-                results = []
-
-            matched = None
-            title_norm = re.sub(r"\s*\(\d{4}\)$", "", selected.title).lower().strip()
-            title_words = set(title_norm.split())
-            best_score = 0
-            for r in results:
-                rt = re.sub(r"\s*\(\d{4}\)$", "", r.title).lower().strip()
-                if rt == title_norm:
-                    matched = r
-                    break
-                rt_words = set(rt.split())
-                score = len(title_words & rt_words) / max(len(title_words), 1)
-                if score > best_score and score >= 0.5:
-                    best_score = score
-                    matched = r
+            sel_type = getattr(selected, "media_type", "movie")
+            matched = _find_flixhq_match(selected.title, sel_type)
             if not matched:
+                print(f"no match for '{selected.title}' on FlixHQ")
                 return None
 
             result = flixhq.get_stream(matched.id)
