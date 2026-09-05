@@ -235,13 +235,14 @@ def _get_stream(selected, quality, source_choice) -> tuple[str, list[str], dict]
                 result = None
         else:
             # Cross-source: search IDLIX by title
+            clean_title = re.sub(r"\s*\(\d{4}\)$", "", selected.title).strip()
             try:
-                results = idlix.search(selected.title)
+                results = idlix.search(clean_title)
             except Exception as e:
                 print(f"search error: {e}")
                 results = []
             matched = None
-            title_norm = re.sub(r"\s*\(\d{4}\)$", "", selected.title).lower().strip()
+            title_norm = clean_title.lower()
             title_words = set(title_norm.split())
             sel_type = getattr(selected, "media_type", "movie")
             best_score = 0
@@ -309,8 +310,9 @@ def _get_stream(selected, quality, source_choice) -> tuple[str, list[str], dict]
             # Add IDLIX subtitles (sub Indo) to FlixHQ
             subs = list(result.subtitles)
             try:
-                idlix_results = idlix.search(selected.title)
-                title_norm2 = re.sub(r"\s*\(\d{4}\)$", "", selected.title).lower().strip()
+                clean_title2 = re.sub(r"\s*\(\d{4}\)$", "", selected.title).strip()
+                idlix_results = idlix.search(clean_title2)
+                title_norm2 = clean_title2.lower()
                 for ir in idlix_results:
                     rt2 = re.sub(r"\s*\(\d{4}\)$", "", ir.title).lower().strip()
                     if rt2 == title_norm2 or title_norm2 in rt2 or rt2 in title_norm2:
