@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import difflib
 import os
 import re
 import sys
@@ -58,12 +59,12 @@ def _pick_source():
         return "flixhq", None
 
 
-def _find_flixhq_match(title: str, media_type: str = "movie"):
+def _find_flixhq_match(title: str, year: str = "", media_type: str = "movie"):
     """Find matching FlixHQ item by testing progressive queries and verifying title/type."""
     clean = re.sub(r"\s*\(\d{4}\)$", "", title).strip()
     title_norm = clean.lower()
-    title_words = set(re.findall(r"\w+", title_norm))
-    title_nums = {w for w in title_words if w.isdigit()}
+    title_words = [w for w in re.findall(r"\w+", title_norm) if w not in ("the", "a", "an")]
+    title_nums = {w for w in re.findall(r"\w+", title_norm) if w.isdigit()}
 
     queries = []
     # If title has hyphen (e.g. Spider-Man), try hyphenated keyword first
@@ -71,18 +72,12 @@ def _find_flixhq_match(title: str, media_type: str = "movie"):
     if hyphen_match:
         queries.append(hyphen_match.group(1))
 
-    # Core keywords without parentheses/year/articles
-    q_simple = re.sub(r"\([^)]*\)", "", clean)
-    q_simple = re.sub(r"\d{4}", "", q_simple)
-    q_simple = re.sub(r"[:\-]", " ", q_simple)
-    for prefix in ["The ", "A ", "An "]:
-        if q_simple.startswith(prefix):
-            q_simple = q_simple[len(prefix):]
-    words = [w for w in q_simple.split() if len(w) > 2]
-    if len(words) >= 2:
-        queries.append(" ".join(words[:2]))
-    if words:
-        queries.append(words[0])
+    # All meaningful words from title
+    q_words = [w for w in re.sub(r"[:\-]", " ", clean).split() if len(w) > 2 and w.lower() not in ("the", "a", "an")]
+    if len(q_words) >= 2:
+        queries.append(" ".join(q_words[:2]))
+    for w in q_words:
+        queries.append(w)
     queries.append(clean)
 
     seen = set()
@@ -103,16 +98,17 @@ def _find_flixhq_match(title: str, media_type: str = "movie"):
 
         for r in results:
             rt = re.sub(r"\s*\(\d{4}\)$", "", r.title).strip().lower()
-            rt_words = set(re.findall(r"\w+", rt))
+            rt_words = [w for w in re.findall(r"\w+", rt) if w not in ("the", "a", "an")]
             rt_nums = {w for w in rt_words if w.isdigit()}
             r_type = getattr(r, "media_type", "movie")
+            r_year = getattr(r, "year", "")
 
             # Exact title + same media type is an instant win
             if rt == title_norm and r_type == media_type:
                 return r
             if rt == title_norm and not best_candidate:
                 best_candidate = r
-                best_score = 1.0
+                best_score = 2.0
                 continue
 
             # Sequels/numbers must strictly match
@@ -121,15 +117,27 @@ def _find_flixhq_match(title: str, media_type: str = "movie"):
             if not title_nums and rt_nums:
                 continue
 
-            score = len(title_words & rt_words) / max(len(title_words), 1)
-            if r_type == media_type:
-                score += 0.2
+            # Must share at least one meaningful word
+            set_title_words = set(title_words)
+            set_rt_words = set(rt_words)
+            if not (set_title_words & set_rt_words):
+                continue
 
-            if score > best_score and score >= 0.7:
+            # Meaningful word overlap + sequence similarity
+            overlap = len(set_title_words & set_rt_words) / max(len(set_title_words), 1)
+            sim = difflib.SequenceMatcher(None, title_norm, rt).ratio()
+
+            score = overlap * 1.5 + sim
+            if r_type == media_type:
+                score += 0.3
+            if year and r_year and year == r_year:
+                score += 0.5
+
+            if score > best_score and score >= 2.0:
                 best_score = score
                 best_candidate = r
 
-        if best_candidate and best_score >= 1.0:
+        if best_candidate and best_score >= 2.0:
             return best_candidate
 
     return best_candidate
@@ -173,13 +181,26 @@ def _search(query: str) -> list:
         if key not in existing_titles:
             merged.append(r)
 
+    q_norm = query.lower().strip()
+    q_words = set(re.findall(r"\w+", q_norm))
+
     def _sort_key(r):
+        title = r.title
         year_str = getattr(r, "year", "") or "0"
         try:
             year = int(re.sub(r"[^\d]", "", year_str) or "0")
         except ValueError:
             year = 0
-        return (-year, r.title.lower())
+
+        clean = re.sub(r"\s*\(\d{4}\)$", "", title).lower().strip()
+        words = set(re.findall(r"\w+", clean))
+
+        is_exact = 1 if clean == q_norm else 0
+        overlap = len(q_words & words) / max(len(q_words), 1)
+        sim = difflib.SequenceMatcher(None, q_norm, clean).ratio()
+
+        relevance = is_exact * 2.0 + overlap * 1.5 + sim
+        return (-round(relevance, 2), -year, clean)
 
     merged.sort(key=_sort_key)
     return merged
@@ -339,7 +360,8 @@ def _get_stream(selected, quality, source_choice) -> tuple[str, list[str], dict]
             result = flixhq.get_stream(media_id)
         else:
             sel_type = getattr(selected, "media_type", "movie")
-            matched = _find_flixhq_match(selected.title, sel_type)
+            sel_year = getattr(selected, "year", "")
+            matched = _find_flixhq_match(selected.title, year=sel_year, media_type=sel_type)
             if not matched:
                 print(f"no match for '{selected.title}' on FlixHQ")
                 return None

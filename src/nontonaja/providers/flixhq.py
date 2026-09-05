@@ -48,44 +48,59 @@ def _extract_id(href: str) -> str:
     return href
 
 
-def search(query: str) -> list[SearchResult]:
+def search(query: str, max_pages: int = 3) -> list[SearchResult]:
     client = _get_client()
-    resp = client.get(f"{BASE_URL}/search/{query.replace(' ', '-')}")
-    soup = _soup(resp.text)
-
+    base_slug = query.strip().replace(" ", "-")
     results = []
-    for item in soup.select("div.film-poster"):
-        a = item.find("a", href=True)
-        if not a:
-            continue
-        href = a["href"]
-        media_id = _extract_id(href)
-        img = item.find("img")
-        image = img.get("data-src") or img.get("src", "") if img else ""
-        results.append(
-            SearchResult(
-                id=media_id,
-                title=a.get("title", ""),
-                year="",
-                image=image,
-                media_type="tv" if "/series/" in href else "movie",
-            )
-        )
 
-    detail_items = soup.select("div.film-detail")
-    for i, item in enumerate(detail_items):
-        if i >= len(results):
+    for page in range(1, max_pages + 1):
+        url = f"{BASE_URL}/search/{base_slug}/page/{page}/" if page > 1 else f"{BASE_URL}/search/{base_slug}"
+        resp = client.get(url)
+        if resp.status_code != 200:
             break
-        heading = item.find("h3", class_="film-name") or item.find("h2", class_="film-name")
-        if heading:
-            a_tag = heading.find("a")
-            if a_tag:
-                results[i].title = a_tag.get("title", a_tag.text.strip())
-        spans = item.select("div.fd-infor > span.fdi-item")
-        if spans:
-            results[i].year = spans[0].text.strip()
-        if len(spans) >= 3:
-            results[i].duration = spans[2].text.strip()
+        soup = _soup(resp.text)
+        posters = soup.select("div.film-poster")
+        if not posters:
+            break
+
+        page_results = []
+        for item in posters:
+            a = item.find("a", href=True)
+            if not a:
+                continue
+            href = a["href"]
+            media_id = _extract_id(href)
+            img = item.find("img")
+            image = img.get("data-src") or img.get("src", "") if img else ""
+            page_results.append(
+                SearchResult(
+                    id=media_id,
+                    title=a.get("title", ""),
+                    year="",
+                    image=image,
+                    media_type="tv" if "/series/" in href else "movie",
+                )
+            )
+
+        detail_items = soup.select("div.film-detail")
+        for i, item in enumerate(detail_items):
+            if i >= len(page_results):
+                break
+            heading = item.find("h3", class_="film-name") or item.find("h2", class_="film-name")
+            if heading:
+                a_tag = heading.find("a")
+                if a_tag:
+                    page_results[i].title = a_tag.get("title", a_tag.text.strip())
+            spans = item.select("div.fd-infor > span.fdi-item")
+            if spans:
+                page_results[i].year = spans[0].text.strip()
+            if len(spans) >= 3:
+                page_results[i].duration = spans[2].text.strip()
+
+        results.extend(page_results)
+        pagination = soup.select("ul.pagination li")
+        if not pagination or page >= len(pagination):
+            break
 
     return results
 
