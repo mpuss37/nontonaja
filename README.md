@@ -1,88 +1,102 @@
 # nontonaja
 
-CLI media streaming tool. Cari film dari 3 source (LK21, FlixHQ, IDLIX), putar langsung lewat terminal.
+## Prasyarat
+
+Sebelum menginstall nontonaja, pastikan dependensi sistem berikut sudah terinstall:
+
+### Arch / Artix Linux
+
+```bash
+sudo pacman -S mpv ffmpeg fzf python python-pip
+```
+
+### Debian / Ubuntu
+
+```bash
+sudo apt install mpv ffmpeg fzf python3 python3-pip python3-venv
+```
+
+### Fedora
+
+```bash
+sudo dnf install mpv ffmpeg fzf python3 python3-pip
+```
+
+### macOS (Homebrew)
+
+```bash
+brew install mpv ffmpeg fzf python
+```
+
+| Dependensi | Fungsi | Wajib? |
+|------------|--------|--------|
+| `python` >= 3.10 | Runtime | Ya |
+| `mpv` | Memutar video di terminal | Ya |
+| `ffmpeg` | Download & multiplexing video + subtitle | Ya |
+| `fzf` | Interactive fuzzy search menu (ala ani-cli) | Opsional (fallback ke prompt angka) |
 
 ## Instalasi
 
+Setelah semua dependensi terinstall, pilih salah satu cara berikut:
+
 ```bash
-# Option 1: pipx (recommended)
+# Cara 1: pip (recommended)
 pip install --user --break-system-packages .
 nontonaja "spider man"
 
-# Option 2: setup.sh
+# Cara 2: setup.sh (auto venv)
 bash setup.sh
 source .venv/bin/activate
 nontonaja "spider man"
 
-# Option 3: pipx via pacman (Arch/Artix)
-sudo pacman -S python-pipx
+# Cara 3: pipx (isolated environment)
+sudo pacman -S python-pipx   # atau: pip install --user pipx
 pipx install .
 nontonaja "spider man"
 ```
 
-### System Dependencies
-
-| Package | Fungsi |
-|---------|--------|
-| `mpv` | Player utama |
-| `ffmpeg` | Download |
-
 ## Cara Pakai
 
 ```bash
-# Search & play
+# Cari dan putar film
 nontonaja "spider man"
 nontonaja "avengers"
 
-# Pilih quality spesifik
+# Pilih quality
 nontonaja -q 720 "spider man"
 nontonaja -q 1080 "avengers"
 
-# Download
+# Mode download
 nontonaja -d "spider man"
-nontonaja -d /path/to/dir "spider man"
+
+# Download ke direktori tertentu
+nontonaja -d -o ~/Videos "spider man"
+nontonaja -o ~/Videos "spider man"
 ```
 
 ### Flow
 
 ```
-1. Search film dari LK21 + FlixHQ + IDLIX (merged, deduplicated, diurutkan berdasarkan relevansi query)
-2. Pilih film dari daftar
-3. Pilih source (hanya menerima opsi 1, 2, atau 3):
+1. Cari film dari LK21 + FlixHQ + IDLIX (merged, deduplicated, diurutkan berdasarkan relevansi)
+2. Pilih film dari daftar hasil
+3. Pilih source & quality:
    1. 480p   — LK21 P2P + subtitle
    2. 720p   — FlixHQ M3U8 + IDLIX sub Indo
    3. 1080p  — FlixHQ M3U8 + IDLIX sub Indo
-4. Stream ready → putar via mpv
+4. Pilih action:
+   1. Stream   — Putar langsung via mpv
+   2. Download — Download via ffmpeg (.mkv)
+   3. Stream & Download — Keduanya sekaligus
+   4. Exit
 ```
 
-### Source Comparison
+### Perbandingan Source
 
 | Opsi | Video Source | Quality | Subtitle |
 |------|-------------|---------|----------|
 | 1 | LK21 (P2P) | 480p | LK21 |
 | 2 | FlixHQ (M3U8) | 720p | FlixHQ + IDLIX sub Indo |
 | 3 | FlixHQ (M3U8) | 1080p | FlixHQ + IDLIX sub Indo |
-
-## Struktur Project
-
-```
-nontonaja/
-├── pyproject.toml
-├── setup.sh
-├── README.md
-├── scraping-flow.md
-└── src/nontonaja/
-    ├── __main__.py
-    ├── cli.py               # Entry point + main flow
-    ├── config.py            # Config loading
-    ├── download.py          # FFmpeg download
-    ├── proxy.py             # Local HTTP proxy (IDLIX HLS rewrite)
-    ├── quality.py           # M3U8 quality selection
-    └── providers/
-        ├── lk21.py          # LK21 scraper + JSON API
-        ├── flixhq.py        # FlixHQ scraper
-        └── idlix.py         # IDLIX API (pentos claim/redeem)
-```
 
 ## Config
 

@@ -9,8 +9,7 @@ from __future__ import annotations
 
 import re
 import threading
-from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
-from urllib.parse import urlparse
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import httpx
 
@@ -44,7 +43,10 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _serve_url(self, url: str | None):
         if not url:
-            self.send_error(404)
+            try:
+                self.send_error(404)
+            except Exception:
+                pass
             return
         try:
             r = self.server.httpx_client.get(url, timeout=30)
@@ -57,7 +59,10 @@ class _Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(r.content)
         except Exception:
-            self.send_error(502)
+            try:
+                self.send_error(502)
+            except Exception:
+                pass
 
     def log_message(self, *args):
         pass
@@ -104,12 +109,20 @@ class ProxyServer(ThreadingHTTPServer):
         )
 
 
-def start_proxy(master_url: str) -> tuple[str, ProxyServer]:
-    """Start proxy for an IDLIX HLS stream.
+def start_proxy(master_url: str, headers: dict | None = None) -> tuple[str, ProxyServer]:
+    """Start proxy for an HLS stream (IDLIX/LK21).
 
     Returns (proxy_playlist_url, server_instance).
     """
-    client = httpx.Client(verify=False, follow_redirects=True, timeout=15)
+    req_headers = {
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+    }
+    if headers:
+        req_headers.update(headers)
+    elif "playcdn.de" in master_url:
+        req_headers["Referer"] = "https://playcdn.de/"
+
+    client = httpx.Client(verify=False, follow_redirects=True, timeout=15, headers=req_headers)
 
     # Fetch playlist
     resp = client.get(master_url)
@@ -118,8 +131,8 @@ def start_proxy(master_url: str) -> tuple[str, ProxyServer]:
     # Check if this is a master playlist (has #EXT-X-STREAM-INF) or sub-playlist
     if "#EXT-X-STREAM-INF" in playlist_text:
         # Master playlist — find highest quality sub-playlist
-        from urllib.parse import urljoin
         import re as _re
+        from urllib.parse import urljoin
         lines = playlist_text.split("\n")
         best_bw = 0
         sub_url = ""

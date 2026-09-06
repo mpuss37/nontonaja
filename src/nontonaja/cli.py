@@ -4,31 +4,62 @@ import argparse
 import difflib
 import os
 import re
-import sys
-import subprocess
-import tempfile
 import shutil
+import subprocess
+import sys
+import tempfile
+import threading
+import time
 
 import httpx
 
 from .config import load_config, merge_args
-from .providers import flixhq, lk21, idlix
+from .providers import flixhq, idlix, lk21
 from .quality import select_quality
 
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="nontonaja",
-        description="A CLI media streaming tool",
+        description="A CLI media streaming and downloading tool",
     )
     p.add_argument("query", nargs="*", help="Search query")
-    p.add_argument("-q", "--quality", type=int, choices=[360, 720, 1080], help="Video quality")
-    p.add_argument("-d", "--download", nargs="?", const=".", help="Download to directory")
+    p.add_argument("-q", "--quality", type=int, choices=[360, 480, 720, 1080], help="Video quality")
+    p.add_argument("-d", "--download", action="store_true", help="Download video mode")
+    p.add_argument("-o", "--output", help="Output directory for download (default: current directory)")
     return p
 
 
+def _fzf_menu(options: list[str], prompt: str = "Select: ") -> str | None:
+    """Show an interactive fzf menu if available and running in a TTY."""
+    if not shutil.which("fzf") or not sys.stdin.isatty():
+        return None
+    try:
+        proc = subprocess.run(
+            [
+                "fzf",
+                "--reverse",
+                "--prompt",
+                prompt,
+                "--height",
+                "40%",
+                "--border",
+                "--info=inline",
+            ],
+            input="\n".join(options),
+            text=True,
+            capture_output=True,
+        )
+        if proc.returncode == 0:
+            return proc.stdout.strip()
+    except Exception:
+        pass
+    return None
+
+
 def _pick(results):
-    for i, r in enumerate(results, 1):
+    items = []
+    for r in results:
         year = getattr(r, "year", "")
         mtype = getattr(r, "media_type", "?")
         title = r.title
@@ -36,7 +67,16 @@ def _pick(results):
         if year and title.endswith(f" ({year})"):
             title = title[: -len(f" ({year})")]
         label = f" ({year})" if year else ""
-        print(f"  {i}. {title}{label} [{mtype}]")
+        items.append(f"{title}{label} [{mtype}]")
+
+    # Try fzf first (ani-cli style)
+    selected_item = _fzf_menu(items, prompt="Select Movie: ")
+    if selected_item and selected_item in items:
+        return results[items.index(selected_item)]
+
+    # Fallback numbered list
+    for i, item in enumerate(items, 1):
+        print(f"  {i}. {item}")
     try:
         choice = int(input("Pilih: ")) - 1
         return results[choice]
@@ -44,10 +84,63 @@ def _pick(results):
         return None
 
 
+def _pick_action() -> str:
+    actions = [
+        "1. Stream (Play via mpv)",
+        "2. Download",
+        "3. Stream & Download",
+        "4. Exit",
+    ]
+    selected = _fzf_menu(actions, prompt="Select Action: ")
+    if selected:
+        if "Stream & Download" in selected:
+            return "both"
+        elif "Download" in selected:
+            return "download"
+        elif "Exit" in selected:
+            return "exit"
+        return "play"
+
+    print("Action:")
+    print("  1. Stream (Play via mpv)")
+    print("  2. Download")
+    print("  3. Stream & Download")
+    print("  4. Exit")
+    while True:
+        try:
+            choice = input("Pilih action (default: 1): ").strip()
+            if not choice or choice == "1":
+                return "play"
+            elif choice == "2":
+                return "download"
+            elif choice == "3":
+                return "both"
+            elif choice == "4":
+                return "exit"
+            print("Pilihan tidak valid. Silakan pilih 1, 2, 3, atau 4.")
+        except (ValueError, EOFError):
+            return "play"
+
+
 def _pick_source():
-    print("  1. 480p")
-    print("  2. 720p")
-    print("  3. 1080p")
+    sources = [
+        "1. 480p   — LK21 P2P",
+        "2. 720p   — FlixHQ M3U8",
+        "3. 1080p  — FlixHQ M3U8",
+    ]
+    selected = _fzf_menu(sources, prompt="Select Quality/Source: ")
+    if selected:
+        if selected.startswith("1") or "480p" in selected:
+            return "lk21", None
+        elif selected.startswith("2") or "720p" in selected:
+            return "flixhq", 720
+        elif selected.startswith("3") or "1080p" in selected:
+            return "flixhq", 1080
+
+    print("Quality / Source:")
+    print("  1. 480p   — LK21 P2P")
+    print("  2. 720p   — FlixHQ M3U8")
+    print("  3. 1080p  — FlixHQ M3U8")
     while True:
         try:
             choice = int(input("Source: "))
@@ -209,17 +302,17 @@ def _search(query: str) -> list:
     return merged
 
 
-def _play(stream_url: str, title: str, subtitles: list[str], headers: dict | None = None) -> None:
+def _play(stream_url: str, title: str, subtitles: list[str], headers: dict | None = None, detach: bool = False) -> None:
     sub_dir = tempfile.mkdtemp(prefix="nontonaja-subs-")
     local_subs = []
     proxy_server = None
     client = httpx.Client(verify=False, follow_redirects=True, timeout=15)
 
-    # Start local proxy for IDLIX streams (rewrites .jpg/.css extensions to .mp4)
+    # Start local proxy for IDLIX / LK21 streams (rewrites .jpg/.css/.pict extensions to .ts/.mp4)
     local_stream = stream_url
     try:
         from .proxy import start_proxy
-        local_stream, proxy_server = start_proxy(stream_url)
+        local_stream, proxy_server = start_proxy(stream_url, headers=headers)
         print(f"proxy ready: {local_stream}")
     except Exception as e:
         print(f"proxy failed: {e}")
@@ -234,43 +327,66 @@ def _play(stream_url: str, title: str, subtitles: list[str], headers: dict | Non
         except Exception:
             pass
 
-    for sub_url in subtitles:
+    from .download import detect_subtitle_info
+
+    sub_items: list[tuple[str, str, str]] = []  # (path, label, lang_code)
+    for i, sub_url in enumerate(subtitles):
         try:
             resp = client.get(sub_url)
-            ext = ".vtt" if ".vtt" in sub_url else ".srt"
-            lang = sub_url.rsplit("_", 1)[-1].split(".")[0] if "_" in sub_url else "sub"
-            path = os.path.join(sub_dir, f"sub_{lang}{ext}")
-            with open(path, "wb") as f:
-                f.write(resp.content)
-            local_subs.append(path)
+            if resp.status_code == 200:
+                text_content = resp.text
+                label, lang_code = detect_subtitle_info(sub_url, text_content)
+                ext = ".vtt" if ".vtt" in sub_url else ".srt"
+                path = os.path.join(sub_dir, f"{i}_{label}{ext}")
+                with open(path, "wb") as f:
+                    f.write(resp.content)
+                sub_items.append((path, label, lang_code))
         except Exception:
             pass
 
-    try:
-        mpv_cmd = [
-            "mpv", local_stream,
-            f"--force-media-title={title}",
-            "--no-ytdl",
-            "--msg-level=vo=v",
-            "--cache=yes",
-            "--demuxer-max-bytes=50M",
-            "--demuxer-readahead-secs=30",
-        ]
-        for sub in local_subs:
-            mpv_cmd += ["--sub-file=" + sub]
-        if headers:
-            for k, v in headers.items():
-                mpv_cmd += [f"--http-header-fields={k}: {v}"]
-            if "User-Agent" in headers:
-                mpv_cmd += [f"--user-agent={headers['User-Agent']}"]
-        # Show stream ready message for non-IDLIX sources (IDLIX shows its own after countdown)
-        if not local_stream.startswith("http://127.0.0.1:"):
-            print(f"{title} stream ready, wait :)")
-        subprocess.run(mpv_cmd)
-    finally:
+    # Sort so Indonesian subtitles come first
+    sub_items.sort(key=lambda s: 0 if s[2] == "ind" or "indonesia" in s[1].lower() else 1)
+    local_subs = [s[0] for s in sub_items]
+
+    def _cleanup():
         if proxy_server:
             proxy_server.shutdown()
         shutil.rmtree(sub_dir, ignore_errors=True)
+
+    mpv_cmd = [
+        "mpv", local_stream,
+        f"--force-media-title={title}",
+        "--no-ytdl",
+        "--msg-level=vo=v",
+        "--cache=yes",
+        "--demuxer-max-bytes=50M",
+        "--demuxer-readahead-secs=30",
+        "--slang=id,ind,indonesian,en,eng",
+    ]
+    for sub in local_subs:
+        mpv_cmd += ["--sub-file=" + sub]
+    if headers:
+        for k, v in headers.items():
+            mpv_cmd += [f"--http-header-fields={k}: {v}"]
+        if "User-Agent" in headers:
+            mpv_cmd += [f"--user-agent={headers['User-Agent']}"]
+
+    if detach:
+        import threading
+        def _run_bg():
+            try:
+                subprocess.run(mpv_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            finally:
+                _cleanup()
+
+        t = threading.Thread(target=_run_bg, daemon=True)
+        t.start()
+        print("Pemutaran dimulai di jendela MPV. Terminal tetap aktif.\n")
+    else:
+        try:
+            subprocess.run(mpv_cmd)
+        finally:
+            _cleanup()
 
 
 def _get_stream(selected, quality, source_choice) -> tuple[str, list[str], dict] | None:
@@ -308,6 +424,13 @@ def _get_stream(selected, quality, source_choice) -> tuple[str, list[str], dict]
         if result and result.url:
             url = select_quality(result.url, quality, headers=result.headers)
             return (url, result.subtitles, result.headers)
+
+        # Fallback to FlixHQ or IDLIX if LK21 P2P is unavailable/blocked
+        print("LK21 stream tidak tersedia, mencoba fallback ke FlixHQ/IDLIX...")
+        fallback = _get_stream(selected, quality or 720, "flixhq")
+        if fallback:
+            return fallback
+        return _get_stream(selected, quality, "idlix")
     elif source_choice == "idlix":
         source = getattr(selected, "source", "")
         if source == "idlix":
@@ -393,6 +516,41 @@ def _get_stream(selected, quality, source_choice) -> tuple[str, list[str], dict]
     return None
 
 
+def _prepare_stream(selected, quality, source_choice, title: str = ""):
+    """Run _get_stream in background thread while showing progress bar."""
+    bar_width = 22
+    label = title or "stream"
+    result_holder = [None]
+    done = threading.Event()
+
+    def _fetch():
+        result_holder[0] = _get_stream(selected, quality, source_choice)
+        done.set()
+
+    t = threading.Thread(target=_fetch, daemon=True)
+    t.start()
+
+    elapsed = 0.0
+    interval = 0.25
+    # Use asymptotic progress: approaches 95% but never reaches 100% until done
+    while not done.is_set():
+        pct = min(95.0, (1 - 1 / (1 + elapsed / 8)) * 100)
+        filled = int(round(bar_width * (pct / 100.0)))
+        bar = "█" * filled + "░" * (bar_width - filled)
+        secs = int(elapsed)
+        sys.stdout.write(f"\r  Menyiapkan stream: [{bar}] {pct:5.1f}% | {secs}s ({label})   ")
+        sys.stdout.flush()
+        done.wait(timeout=interval)
+        elapsed += interval
+
+    # Complete
+    bar = "█" * bar_width
+    sys.stdout.write(f"\r  Menyiapkan stream: [{bar}] 100.0% | Stream siap! ({label})                    \n")
+    sys.stdout.flush()
+
+    return result_holder[0]
+
+
 def run(args: argparse.Namespace) -> None:
     config = load_config()
     config = merge_args(config, args)
@@ -417,20 +575,37 @@ def run(args: argparse.Namespace) -> None:
     source_choice, quality_override = _pick_source()
     quality = quality_override or config.quality
 
-    stream = _get_stream(selected, quality, source_choice)
+    stream = _prepare_stream(selected, quality, source_choice, selected.title)
     if not stream:
-        print(f"No stream found.")
+        print("No stream found.")
         sys.exit(1)
 
     stream_url, subtitles, headers = stream
 
-    if args.download is not None:
+    if args.download or args.output:
         from .download import download
-        download_dir = args.download or os.getcwd()
-        download(stream_url, download_dir, selected.title, subtitles, config.subs_language)
+        download_dir = args.output or config.download_dir or os.getcwd()
+        download(stream_url, download_dir, selected.title, subtitles, config.subs_language, headers=headers)
         return
 
-    _play(stream_url, selected.title, subtitles, headers=headers)
+    while True:
+        action = _pick_action()
+        if action == "exit":
+            break
+        elif action == "play":
+            # Jalankan mpv di background (detached) agar terminal tetap aktif dan bisa memilih aksi berikutnya
+            _play(stream_url, selected.title, subtitles, headers=headers, detach=True)
+        elif action == "download":
+            from .download import download
+            download_dir = args.output or config.download_dir or os.getcwd()
+            download(stream_url, download_dir, selected.title, subtitles, config.subs_language, headers=headers)
+            break
+        elif action == "both":
+            from .download import download
+            _play(stream_url, selected.title, subtitles, headers=headers, detach=True)
+            download_dir = args.output or config.download_dir or os.getcwd()
+            download(stream_url, download_dir, selected.title, subtitles, config.subs_language, headers=headers)
+            break
 
 
 def main() -> None:

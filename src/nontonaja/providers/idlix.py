@@ -65,12 +65,8 @@ def _headers() -> dict:
 
 
 def _countdown(seconds: int, title: str = "") -> None:
-    for remaining in range(seconds, 0, -1):
-        sys.stdout.write(f"\rwaiting {remaining}s... ")
-        sys.stdout.flush()
-        time.sleep(1)
-    label = f"{title} " if title else ""
-    sys.stdout.write(f"\r{label}stream ready, wait :)          \n")
+    """Wait for IDLIX unlock timer (silent — progress bar handled by cli.py)."""
+    time.sleep(max(seconds, 0))
 
 
 def search(query: str) -> list[SearchResult]:

@@ -152,7 +152,10 @@ def _search_browse(query: str) -> list[LK21Result]:
 def get_p2p_stream(slug: str) -> StreamResult | None:
     """Get P2P stream from LK21 movie."""
     client = _get_client()
-    resp = client.get(f"{BASE_URL}/{slug}")
+    resp = client.get(
+        f"{BASE_URL}/{slug}",
+        headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"}
+    )
 
     if resp.status_code != 200:
         return None
@@ -165,6 +168,17 @@ def get_p2p_stream(slug: str) -> StreamResult | None:
     if not player_urls:
         return None
 
+    # Try new videonode -> playcdn -> verify.php flow first
+    for purl in player_urls:
+        if "videonode" in purl or "p2p" in purl:
+            try:
+                stream_res = _call_playcdn_api(purl, f"{BASE_URL}/{slug}")
+                if stream_res:
+                    return stream_res
+            except Exception:
+                pass
+
+    # Legacy fallback for older links
     for purl in player_urls:
         vid = None
         match = re.search(r"hownetwork\.xyz/video\.php\?id=([^&\s]+)", purl)
@@ -174,7 +188,58 @@ def get_p2p_stream(slug: str) -> StreamResult | None:
         if match2:
             vid = match2.group(1)
         if vid:
-            return _call_p2p_api(vid)
+            res = _call_p2p_api(vid)
+            if res:
+                return res
+
+    return None
+
+
+def _call_playcdn_api(purl: str, referer: str) -> StreamResult | None:
+    client = _get_client()
+    ua = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+    vnode_resp = client.get(purl, headers={"Referer": referer, "User-Agent": ua})
+    if vnode_resp.status_code != 200:
+        return None
+
+    playcdn_urls = re.findall(r'<iframe[^>]+src="([^"]+playcdn[^"]+)"', vnode_resp.text)
+    if not playcdn_urls:
+        playcdn_urls = re.findall(r'https?://playcdn\.de/[^\s"\'<>]+', vnode_resp.text)
+    if not playcdn_urls:
+        return None
+
+    import json
+    playcdn_url = playcdn_urls[0].replace("&amp;", "&")
+    pcdn_resp = client.get(playcdn_url, headers={"Referer": purl, "User-Agent": ua})
+    if pcdn_resp.status_code != 200:
+        return None
+
+    token_match = re.search(r'var\s+data\s*=\s*(\{.*?\});', pcdn_resp.text)
+    if not token_match:
+        return None
+
+    try:
+        data = json.loads(token_match.group(1))
+        verify_resp = client.post(
+            "https://playcdn.de/verify.php",
+            json={"token": data["token"], "is_ios": False},
+            headers={
+                "Referer": playcdn_url,
+                "Origin": "https://playcdn.de",
+                "Content-Type": "application/json",
+                "User-Agent": ua,
+            },
+        )
+        if verify_resp.status_code == 200:
+            res_json = verify_resp.json()
+            if res_json.get("status") == "success" and res_json.get("fileUrl"):
+                return StreamResult(
+                    url=res_json["fileUrl"],
+                    headers={"Referer": "https://playcdn.de/", "User-Agent": ua},
+                    source="lk21",
+                )
+    except Exception:
+        pass
 
     return None
 

@@ -6,3 +6,6 @@ dist/
 build/
 .ruff_cache/
 core
+*.mkv
+*.mp4
+*.ts
