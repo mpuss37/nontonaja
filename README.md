@@ -87,7 +87,8 @@ nontonaja -o ~/Videos "spider man"
    1. Stream   — Putar langsung via mpv
    2. Download — Download via ffmpeg (.mkv)
    3. Stream & Download — Keduanya sekaligus
-   4. Exit
+   4. Change Quality / Source — Ganti quality/source tanpa restart
+   5. Exit
 ```
 
 ### Perbandingan Source

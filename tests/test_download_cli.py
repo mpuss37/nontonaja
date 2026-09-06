@@ -45,6 +45,9 @@ class TestDownloadAndCli(unittest.TestCase):
             self.assertEqual(_pick_action(), "both")
 
         with patch("builtins.input", side_effect=["4"]):
+            self.assertEqual(_pick_action(), "change_quality")
+
+        with patch("builtins.input", side_effect=["5"]):
             self.assertEqual(_pick_action(), "exit")
 
     def test_pick_source(self):

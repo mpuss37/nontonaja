@@ -89,14 +89,17 @@ def _pick_action() -> str:
         "1. Stream (Play via mpv)",
         "2. Download",
         "3. Stream & Download",
-        "4. Exit",
+        "4. Change Quality / Source",
+        "5. Exit",
     ]
     selected = _fzf_menu(actions, prompt="Select Action: ")
     if selected:
         if "Stream & Download" in selected:
             return "both"
-        elif "Download" in selected:
+        elif "Download" in selected and "Stream" not in selected:
             return "download"
+        elif "Change Quality" in selected or "Change Source" in selected:
+            return "change_quality"
         elif "Exit" in selected:
             return "exit"
         return "play"
@@ -105,7 +108,8 @@ def _pick_action() -> str:
     print("  1. Stream (Play via mpv)")
     print("  2. Download")
     print("  3. Stream & Download")
-    print("  4. Exit")
+    print("  4. Change Quality / Source")
+    print("  5. Exit")
     while True:
         try:
             choice = input("Pilih action (default: 1): ").strip()
@@ -116,8 +120,10 @@ def _pick_action() -> str:
             elif choice == "3":
                 return "both"
             elif choice == "4":
+                return "change_quality"
+            elif choice == "5":
                 return "exit"
-            print("Pilihan tidak valid. Silakan pilih 1, 2, 3, atau 4.")
+            print("Pilihan tidak valid. Silakan pilih 1-5.")
         except (ValueError, EOFError):
             return "play"
 
@@ -199,12 +205,23 @@ def _find_flixhq_match(title: str, year: str = "", media_type: str = "movie"):
             r_type = getattr(r, "media_type", "movie")
             r_year = getattr(r, "year", "")
 
-            # Exact title + same media type is an instant win
+            # Exact title + same media type + matching year is an instant win
             if rt == title_norm and r_type == media_type:
-                return r
-            if rt == title_norm and not best_candidate:
-                best_candidate = r
-                best_score = 2.0
+                if not year or not r_year or year == r_year:
+                    return r
+                # Exact title but wrong year — weak candidate only
+                if 1.5 > best_score:
+                    best_score = 1.5
+                    best_candidate = r
+                continue
+            if rt == title_norm:
+                if not year or not r_year or year == r_year:
+                    if 2.5 > best_score:
+                        best_candidate = r
+                        best_score = 2.5
+                elif 1.0 > best_score:
+                    best_candidate = r
+                    best_score = 1.0
                 continue
 
             # Sequels/numbers must strictly match
@@ -221,22 +238,26 @@ def _find_flixhq_match(title: str, year: str = "", media_type: str = "movie"):
 
             # Meaningful word overlap + sequence similarity
             overlap = len(set_title_words & set_rt_words) / max(len(set_title_words), 1)
+            # Reverse overlap: penalize results with many extra words not in query
+            reverse_overlap = len(set_title_words & set_rt_words) / max(len(set_rt_words), 1)
             sim = difflib.SequenceMatcher(None, title_norm, rt).ratio()
 
-            score = overlap * 1.5 + sim
+            score = overlap * 1.0 + reverse_overlap * 1.0 + sim
             if r_type == media_type:
                 score += 0.3
             if year and r_year and year == r_year:
                 score += 0.5
+            elif year and r_year and year != r_year:
+                score -= 1.0
 
-            if score > best_score and score >= 2.0:
+            if score > best_score and score >= 2.0 and sim >= 0.65:
                 best_score = score
                 best_candidate = r
 
         if best_candidate and best_score >= 2.0:
             return best_candidate
 
-    return best_candidate
+    return best_candidate if best_score >= 2.0 else None
 
 
 def _search(query: str) -> list:
@@ -482,17 +503,15 @@ def _get_stream(selected, quality, source_choice) -> tuple[str, list[str], dict]
         media_id = getattr(selected, "id", None)
         source = getattr(selected, "source", "")
 
+        result = None
         if source == "flixhq" and media_id:
             result = flixhq.get_stream(media_id)
         else:
             sel_type = getattr(selected, "media_type", "movie")
             sel_year = getattr(selected, "year", "")
             matched = _find_flixhq_match(selected.title, year=sel_year, media_type=sel_type)
-            if not matched:
-                print(f"no match for '{selected.title}' on FlixHQ")
-                return None
-
-            result = flixhq.get_stream(matched.id)
+            if matched:
+                result = flixhq.get_stream(matched.id)
 
         if result and result.url:
             url = select_quality(result.url, quality)
@@ -512,6 +531,11 @@ def _get_stream(selected, quality, source_choice) -> tuple[str, list[str], dict]
             except Exception:
                 pass
             return (url, subs, {})
+
+        # FlixHQ tidak punya film ini, fallback ke IDLIX stream
+        fallback = _get_stream(selected, quality, "idlix")
+        if fallback:
+            return fallback
 
     return None
 
@@ -593,7 +617,6 @@ def run(args: argparse.Namespace) -> None:
         if action == "exit":
             break
         elif action == "play":
-            # Jalankan mpv di background (detached) agar terminal tetap aktif dan bisa memilih aksi berikutnya
             _play(stream_url, selected.title, subtitles, headers=headers, detach=True)
         elif action == "download":
             from .download import download
@@ -606,6 +629,15 @@ def run(args: argparse.Namespace) -> None:
             download_dir = args.output or config.download_dir or os.getcwd()
             download(stream_url, download_dir, selected.title, subtitles, config.subs_language, headers=headers)
             break
+        elif action == "change_quality":
+            source_choice, quality_override = _pick_source()
+            quality = quality_override or config.quality
+            new_stream = _prepare_stream(selected, quality, source_choice, selected.title)
+            if new_stream:
+                stream_url, subtitles, headers = new_stream
+                print("Quality / source berhasil diubah.\n")
+            else:
+                print("Stream tidak ditemukan untuk source yang dipilih. Stream sebelumnya tetap digunakan.\n")
 
 
 def main() -> None:
