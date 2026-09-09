@@ -527,7 +527,7 @@ def _get_stream(selected, quality, source_choice) -> tuple[str, list[str], dict]
                 return None
             try:
                 result = idlix.get_stream(
-                    selected.id, getattr(selected, "media_type", "movie"), selected.title
+                    matched.id, getattr(selected, "media_type", "movie"), matched.title
                 )
             except Exception as e:
                 print(f"get_stream error: {e}")
