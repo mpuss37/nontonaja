@@ -77,10 +77,20 @@ def _patched_getaddrinfo(host, port=0, family=0, type=0, proto=0, flags=0):
     return _original_getaddrinfo(host, port, family, type, proto, flags)
 
 
+def _refresh_ips() -> None:
+    """Resolve current IPs via DoH, keep hardcoded as fallback."""
+    for domain in list(_DOMAIN_IPS):
+        ip = _doh_resolve(domain)
+        if ip:
+            _DOMAIN_IPS[domain] = [ip]
+
+
 def install() -> None:
     from .config import load_hosts
+
     custom_hosts = load_hosts()
     _DOMAIN_IPS.update(custom_hosts)
+    _refresh_ips()
     socket.getaddrinfo = _patched_getaddrinfo
 
 

@@ -71,21 +71,33 @@ def _countdown(seconds: int, title: str = "") -> None:
 
 
 def search(query: str) -> list[SearchResult]:
-    resp = request_with_retry("GET", f"{_api_base()}/search", params={"q": query}, headers={"User-Agent": _UA})
+    resp = request_with_retry(
+        "GET", f"{_api_base()}/search", params={"q": query}, headers={"User-Agent": _UA}
+    )
     if not resp or resp.status_code != 200:
         return []
 
+    try:
+        data = resp.json()
+    except Exception:
+        return []
+
     results = []
-    for item in resp.json().get("results", []):
+    for item in data.get("results", []):
         release = item.get("releaseDate", "")
         year = release[:4] if release else ""
         poster = item.get("posterPath", "")
         if poster and not poster.startswith("http"):
             poster = f"https://image.tmdb.org/t/p/w500{poster}"
-        results.append(SearchResult(
-            id=item["id"], title=item.get("title", ""), year=year,
-            image=poster, media_type=item.get("contentType", "movie"),
-        ))
+        results.append(
+            SearchResult(
+                id=item["id"],
+                title=item.get("title", ""),
+                year=year,
+                image=poster,
+                media_type=item.get("contentType", "movie"),
+            )
+        )
     return results
 
 
@@ -125,7 +137,11 @@ def _redeem(pentos: dict) -> StreamResult | None:
     r = client.post(
         pentos["redeemUrl"],
         json={"claim": pentos["claim"]},
-        headers={**_headers(), "Origin": "https://z2.idlixku.com", "Referer": "https://z2.idlixku.com/"},
+        headers={
+            **_headers(),
+            "Origin": "https://z2.idlixku.com",
+            "Referer": "https://z2.idlixku.com/",
+        },
     )
     if r.status_code != 200:
         return None
@@ -137,14 +153,18 @@ def _redeem(pentos: dict) -> StreamResult | None:
     return StreamResult(url=m3u8_url, subtitles=subtitles)
 
 
-def get_stream(content_id: str, content_type: str = "movie", title: str = "") -> StreamResult | None:
+def get_stream(
+    content_id: str, content_type: str = "movie", title: str = ""
+) -> StreamResult | None:
     _load_tokens()
     api = _api_base()
     client = _client()
 
     cached = _renewal_tokens.get(content_id)
     if cached:
-        r = client.post(f"{api}/watch/session/refresh-claim", json={"renewalToken": cached}, headers=_headers())
+        r = client.post(
+            f"{api}/watch/session/refresh-claim", json={"renewalToken": cached}, headers=_headers()
+        )
         if r.status_code == 200 and r.json().get("kind") == "pentos":
             pentos = r.json()
             _renewal_tokens[content_id] = pentos.get("renewalToken", cached)

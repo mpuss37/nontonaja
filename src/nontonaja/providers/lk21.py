@@ -4,6 +4,7 @@ import json
 import re
 from dataclasses import dataclass, field
 
+import httpx
 from bs4 import BeautifulSoup
 
 from ..config import load_config
@@ -76,13 +77,21 @@ def _parse_article(article) -> LK21Result | None:
     media_type = "tv" if is_series else "movie"
 
     return LK21Result(
-        id=slug, title=title, year=year, image=image,
-        media_type=media_type, rating=rating, genre=genre,
+        id=slug,
+        title=title,
+        year=year,
+        image=image,
+        media_type=media_type,
+        rating=rating,
+        genre=genre,
     )
 
 
 def browse(page: str = "populer") -> list[LK21Result]:
-    resp = request_with_retry("GET", f"{_base_url()}/{page}")
+    try:
+        resp = request_with_retry("GET", f"{_base_url()}/{page}")
+    except httpx.ConnectError:
+        return []
     if not resp:
         return []
     soup = _soup(resp.text)
@@ -133,20 +142,26 @@ def search(query: str) -> list[LK21Result]:
             for item in items
             if item.get("slug")
         ]
+    except httpx.ConnectError:
+        return []
     except Exception:
         return _search_browse(query)
 
 
 def _search_browse(query: str) -> list[LK21Result]:
-    query_lower = query.lower()
+    query_words = set(query.lower().split())
     all_results = browse("populer") + browse("latest")
 
     seen = set()
     results = []
     for r in all_results:
-        if query_lower in r.title.lower() and r.id not in seen:
-            seen.add(r.id)
-            results.append(r)
+        title_lower = r.title.lower()
+        title_words = set(title_lower.split())
+        # Match if any query word appears in title, or substring match
+        if (query_words & title_words) or query.lower() in title_lower:
+            if r.id not in seen:
+                seen.add(r.id)
+                results.append(r)
     return results
 
 
@@ -161,7 +176,7 @@ def get_p2p_stream(slug: str) -> StreamResult | None:
         return None
 
     html = resp.text
-    if '<title>Lk21 - Nonton Film' in html and "main-player" not in html:
+    if "<title>Lk21 - Nonton Film" in html and "main-player" not in html:
         return None
 
     player_urls = re.findall(r'data-url="([^"]+)"', html)
@@ -210,7 +225,7 @@ def _call_playcdn_api(client, purl: str, referer: str, ua: str) -> StreamResult 
     if pcdn_resp.status_code != 200:
         return None
 
-    token_match = re.search(r'var\s+data\s*=\s*(\{.*?\});', pcdn_resp.text)
+    token_match = re.search(r"var\s+data\s*=\s*(\{.*?\});", pcdn_resp.text)
     if not token_match:
         return None
 

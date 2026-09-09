@@ -26,7 +26,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("query", nargs="*", help="Search query")
     p.add_argument("-q", "--quality", type=int, choices=[360, 480, 720, 1080], help="Video quality")
     p.add_argument("-d", "--download", action="store_true", help="Download video mode")
-    p.add_argument("-o", "--output", help="Output directory for download (default: current directory)")
+    p.add_argument(
+        "-o", "--output", help="Output directory for download (default: current directory)"
+    )
+    p.add_argument("--diag", action="store_true", help="Run connectivity diagnostics")
     return p
 
 
@@ -175,7 +178,11 @@ def _find_flixhq_match(title: str, year: str = "", media_type: str = "movie"):
         queries.append(hyphen_match.group(1))
 
     # All meaningful words from title
-    q_words = [w for w in re.sub(r"[:\-]", " ", clean).split() if len(w) > 2 and w.lower() not in ("the", "a", "an")]
+    q_words = [
+        w
+        for w in re.sub(r"[:\-]", " ", clean).split()
+        if len(w) > 2 and w.lower() not in ("the", "a", "an")
+    ]
     if len(q_words) >= 2:
         queries.append(" ".join(q_words[:2]))
     for w in q_words:
@@ -260,12 +267,15 @@ def _find_flixhq_match(title: str, year: str = "", media_type: str = "movie"):
     return best_candidate if best_score >= 2.0 else None
 
 
-def _search(query: str) -> list:
-    """Unified search across all sources."""
+def _search(query: str) -> tuple[list, list[str]]:
+    """Unified search across all sources. Returns (results, errors)."""
+    errors: list[str] = []
+
     try:
         lk21_results = lk21.search(query)
-    except Exception:
+    except Exception as e:
         lk21_results = []
+        errors.append(f"LK21: {e}")
 
     seen = set()
     lk21_dedup = []
@@ -277,13 +287,15 @@ def _search(query: str) -> list:
 
     try:
         flixhq_results = flixhq.search(query)
-    except Exception:
+    except Exception as e:
         flixhq_results = []
+        errors.append(f"FlixHQ: {e}")
 
     try:
         idlix_results = idlix.search(query)
-    except Exception:
+    except Exception as e:
         idlix_results = []
+        errors.append(f"IDLIX: {e}")
 
     merged = list(lk21_dedup)
     lk21_titles = {re.sub(r"\s*\(\d{4}\)$", "", r.title).lower().strip() for r in lk21_dedup}
@@ -320,10 +332,16 @@ def _search(query: str) -> list:
         return (-round(relevance, 2), -year, clean)
 
     merged.sort(key=_sort_key)
-    return merged
+    return merged, errors
 
 
-def _play(stream_url: str, title: str, subtitles: list[str], headers: dict | None = None, detach: bool = False) -> None:
+def _play(
+    stream_url: str,
+    title: str,
+    subtitles: list[str],
+    headers: dict | None = None,
+    detach: bool = False,
+) -> None:
     sub_dir = tempfile.mkdtemp(prefix="nontonaja-subs-")
     local_subs = []
     proxy_server = None
@@ -333,6 +351,7 @@ def _play(stream_url: str, title: str, subtitles: list[str], headers: dict | Non
     local_stream = stream_url
     try:
         from .proxy import start_proxy
+
         local_stream, proxy_server = start_proxy(stream_url, headers=headers)
         print(f"proxy ready: {local_stream}")
     except Exception as e:
@@ -375,7 +394,8 @@ def _play(stream_url: str, title: str, subtitles: list[str], headers: dict | Non
         shutil.rmtree(sub_dir, ignore_errors=True)
 
     mpv_cmd = [
-        "mpv", local_stream,
+        "mpv",
+        local_stream,
         f"--force-media-title={title}",
         "--no-ytdl",
         "--msg-level=vo=v",
@@ -394,6 +414,7 @@ def _play(stream_url: str, title: str, subtitles: list[str], headers: dict | Non
 
     if detach:
         import threading
+
         def _run_bg():
             try:
                 subprocess.run(mpv_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -457,7 +478,9 @@ def _get_stream(selected, quality, source_choice) -> tuple[str, list[str], dict]
         source = getattr(selected, "source", "")
         if source == "idlix":
             try:
-                result = idlix.get_stream(selected.id, getattr(selected, "media_type", "movie"), selected.title)
+                result = idlix.get_stream(
+                    selected.id, getattr(selected, "media_type", "movie"), selected.title
+                )
             except Exception as e:
                 print(f"get_stream error: {e}")
                 result = None
@@ -491,7 +514,9 @@ def _get_stream(selected, quality, source_choice) -> tuple[str, list[str], dict]
                 print(f"no match for '{selected.title}'")
                 return None
             try:
-                result = idlix.get_stream(selected.id, getattr(selected, "media_type", "movie"), selected.title)
+                result = idlix.get_stream(
+                    selected.id, getattr(selected, "media_type", "movie"), selected.title
+                )
             except Exception as e:
                 print(f"get_stream error: {e}")
                 result = None
@@ -573,7 +598,9 @@ def _prepare_stream(selected, quality, source_choice, title: str = ""):
 
     # Complete
     bar = "█" * bar_width
-    sys.stdout.write(f"\r  Menyiapkan stream: [{bar}] 100.0% | Stream siap! ({label})                    \n")
+    sys.stdout.write(
+        f"\r  Menyiapkan stream: [{bar}] 100.0% | Stream siap! ({label})                    \n"
+    )
     sys.stdout.flush()
 
     return result_holder[0]
@@ -583,6 +610,12 @@ def run(args: argparse.Namespace) -> None:
     config = load_config()
     config = merge_args(config, args)
 
+    if args.diag:
+        from .diag import run_diagnostics
+
+        run_diagnostics()
+        return
+
     query = " ".join(args.query) if args.query else ""
     if not query:
         query = input("Search: ").strip()
@@ -590,13 +623,21 @@ def run(args: argparse.Namespace) -> None:
         print("No query.")
         sys.exit(1)
 
-    results = _search(query)
+    results, errors = _search(query)
     if not results:
+        if errors:
+            print("Provider errors:", file=sys.stderr)
+            for err in errors:
+                print(f"  - {err}", file=sys.stderr)
+            print(file=sys.stderr)
         print(f"Tidak ada hasil untuk '{query}'.")
         print("Kemungkinan jaringan diblokir. Coba:")
-        print("  1. Setup proxy: edit ~/.config/nontonaja/config.toml, tambah proxy = \"socks5://127.0.0.1:1080\"")
-        print("  2. Set env: export NONTONAJA_PROXY=socks5://127.0.0.1:1080")
-        print("  3. Ganti mirror: tambah [mirrors] di config.toml dengan URL alternatif")
+        print("  1. Jalankan 'nontonaja --diag' untuk cek koneksi")
+        print(
+            '  2. Setup proxy: edit ~/.config/nontonaja/config.toml, tambah proxy = "socks5://127.0.0.1:1080"'
+        )
+        print("  3. Set env: export NONTONAJA_PROXY=socks5://127.0.0.1:1080")
+        print("  4. Ganti mirror: tambah [mirrors] di config.toml dengan URL alternatif")
         sys.exit(1)
 
     selected = _pick(results) if len(results) > 1 else results[0]
@@ -616,8 +657,16 @@ def run(args: argparse.Namespace) -> None:
 
     if args.download or args.output:
         from .download import download
+
         download_dir = args.output or config.download_dir or os.getcwd()
-        download(stream_url, download_dir, selected.title, subtitles, config.subs_language, headers=headers)
+        download(
+            stream_url,
+            download_dir,
+            selected.title,
+            subtitles,
+            config.subs_language,
+            headers=headers,
+        )
         return
 
     while True:
@@ -628,14 +677,30 @@ def run(args: argparse.Namespace) -> None:
             _play(stream_url, selected.title, subtitles, headers=headers, detach=True)
         elif action == "download":
             from .download import download
+
             download_dir = args.output or config.download_dir or os.getcwd()
-            download(stream_url, download_dir, selected.title, subtitles, config.subs_language, headers=headers)
+            download(
+                stream_url,
+                download_dir,
+                selected.title,
+                subtitles,
+                config.subs_language,
+                headers=headers,
+            )
             break
         elif action == "both":
             from .download import download
+
             _play(stream_url, selected.title, subtitles, headers=headers, detach=True)
             download_dir = args.output or config.download_dir or os.getcwd()
-            download(stream_url, download_dir, selected.title, subtitles, config.subs_language, headers=headers)
+            download(
+                stream_url,
+                download_dir,
+                selected.title,
+                subtitles,
+                config.subs_language,
+                headers=headers,
+            )
             break
         elif action == "change_quality":
             source_choice, quality_override = _pick_source()
@@ -645,7 +710,9 @@ def run(args: argparse.Namespace) -> None:
                 stream_url, subtitles, headers = new_stream
                 print("Quality / source berhasil diubah.\n")
             else:
-                print("Stream tidak ditemukan untuk source yang dipilih. Stream sebelumnya tetap digunakan.\n")
+                print(
+                    "Stream tidak ditemukan untuk source yang dipilih. Stream sebelumnya tetap digunakan.\n"
+                )
 
 
 def main() -> None:
