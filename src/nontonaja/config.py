@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
+
+import tomllib
 
 
 @dataclass
@@ -22,12 +25,19 @@ def load_config() -> Config:
     path = _config_dir() / "config.toml"
     if not path.exists():
         return cfg
-    import tomllib
     with open(path, "rb") as f:
         data = tomllib.load(f)
     cfg.subs_language = data.get("subs_language", cfg.subs_language)
     cfg.download_dir = data.get("download", cfg.download_dir)
     return cfg
+
+
+def load_hosts() -> dict[str, list[str]]:
+    path = _config_dir() / "hosts.json"
+    if not path.exists():
+        return {}
+    with open(path) as f:
+        return json.load(f)
 
 
 def merge_args(cfg: Config, args) -> Config:
