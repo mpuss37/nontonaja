@@ -1,18 +1,17 @@
 from __future__ import annotations
 
 import json
-import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import httpx
+from ..config import load_config
+from ..http import get_client, request_with_retry
 
-API_BASE = "https://z2.idlixku.com/api"
-UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36"
+_API_BASE = "https://z2.idlixku.com/api"
+_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36"
 _CACHE_FILE = Path.home() / ".config" / "nontonaja" / "idlix_tokens.json"
 
-_client: httpx.Client | None = None
 _renewal_tokens: dict[str, str] = {}
 
 
@@ -53,26 +52,27 @@ class StreamResult:
     headers: dict[str, str] = field(default_factory=dict)
 
 
-def _get_client() -> httpx.Client:
-    global _client
-    if _client is None:
-        _client = httpx.Client(verify=False, follow_redirects=True, timeout=30)
-    return _client
+def _api_base() -> str:
+    cfg = load_config()
+    return cfg.mirrors.get("idlix", _API_BASE)
+
+
+def _client():
+    cfg = load_config()
+    return get_client(proxy=cfg.proxy, name="idlix")
 
 
 def _headers() -> dict:
-    return {"User-Agent": UA, "Content-Type": "application/json"}
+    return {"User-Agent": _UA, "Content-Type": "application/json"}
 
 
 def _countdown(seconds: int, title: str = "") -> None:
-    """Wait for unlock timer (silent — progress bar handled by cli.py)."""
     time.sleep(max(seconds, 0))
 
 
 def search(query: str) -> list[SearchResult]:
-    client = _get_client()
-    resp = client.get(f"{API_BASE}/search", params={"q": query}, headers={"User-Agent": UA})
-    if resp.status_code != 200:
+    resp = request_with_retry("GET", f"{_api_base()}/search", params={"q": query}, headers={"User-Agent": _UA})
+    if not resp or resp.status_code != 200:
         return []
 
     results = []
@@ -90,17 +90,18 @@ def search(query: str) -> list[SearchResult]:
 
 
 def _claim(content_id: str, content_type: str, title: str = "") -> dict | None:
-    client = _get_client()
+    client = _client()
+    api = _api_base()
     h = _headers()
 
-    r = client.get(f"{API_BASE}/watch/play-info/{content_type}/{content_id}", headers=h)
+    r = client.get(f"{api}/watch/play-info/{content_type}/{content_id}", headers=h)
     if r.status_code != 200:
         return None
     gate_token = r.json().get("gateToken")
     if not gate_token:
         return None
 
-    r = client.post(f"{API_BASE}/watch/session/claim", json={"gateToken": gate_token}, headers=h)
+    r = client.post(f"{api}/watch/session/claim", json={"gateToken": gate_token}, headers=h)
     if r.status_code != 200:
         return None
     claim = r.json()
@@ -108,21 +109,19 @@ def _claim(content_id: str, content_type: str, title: str = "") -> dict | None:
     if claim.get("kind") == "pentos":
         return claim
 
-    # Try immediate second claim (skip ad wait)
-    r2 = client.post(f"{API_BASE}/watch/session/claim", json={"gateToken": gate_token}, headers=h)
+    r2 = client.post(f"{api}/watch/session/claim", json={"gateToken": gate_token}, headers=h)
     if r2.status_code == 200 and r2.json().get("kind") == "pentos":
         return r2.json()
 
-    # Fallback: wait full countdown
     wait_s = (claim.get("unlockAt", 0) - claim.get("serverNow", 0)) / 1000
     _countdown(int(max(wait_s, 0)) + 1, title)
 
-    r3 = client.post(f"{API_BASE}/watch/session/claim", json={"gateToken": gate_token}, headers=h)
+    r3 = client.post(f"{api}/watch/session/claim", json={"gateToken": gate_token}, headers=h)
     return r3.json() if r3.status_code == 200 else None
 
 
 def _redeem(pentos: dict) -> StreamResult | None:
-    client = _get_client()
+    client = _client()
     r = client.post(
         pentos["redeemUrl"],
         json={"claim": pentos["claim"]},
@@ -140,10 +139,12 @@ def _redeem(pentos: dict) -> StreamResult | None:
 
 def get_stream(content_id: str, content_type: str = "movie", title: str = "") -> StreamResult | None:
     _load_tokens()
+    api = _api_base()
+    client = _client()
 
     cached = _renewal_tokens.get(content_id)
     if cached:
-        r = _get_client().post(f"{API_BASE}/watch/session/refresh-claim", json={"renewalToken": cached}, headers=_headers())
+        r = client.post(f"{api}/watch/session/refresh-claim", json={"renewalToken": cached}, headers=_headers())
         if r.status_code == 200 and r.json().get("kind") == "pentos":
             pentos = r.json()
             _renewal_tokens[content_id] = pentos.get("renewalToken", cached)

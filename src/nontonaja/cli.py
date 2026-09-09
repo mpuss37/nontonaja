@@ -592,7 +592,11 @@ def run(args: argparse.Namespace) -> None:
 
     results = _search(query)
     if not results:
-        print(f"No results for '{query}'.")
+        print(f"Tidak ada hasil untuk '{query}'.")
+        print("Kemungkinan jaringan diblokir. Coba:")
+        print("  1. Setup proxy: edit ~/.config/nontonaja/config.toml, tambah proxy = \"socks5://127.0.0.1:1080\"")
+        print("  2. Set env: export NONTONAJA_PROXY=socks5://127.0.0.1:1080")
+        print("  3. Ganti mirror: tambah [mirrors] di config.toml dengan URL alternatif")
         sys.exit(1)
 
     selected = _pick(results) if len(results) > 1 else results[0]

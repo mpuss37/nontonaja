@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from urllib.parse import urlparse
 
-import httpx
 from bs4 import BeautifulSoup
 
-BASE_URL = "https://flixhq.ws"
+from ..config import load_config
+from ..http import get_client, request_with_retry
+
+_BASE_URL = "https://flixhq.ws"
 
 
 @dataclass
@@ -26,14 +29,14 @@ class StreamResult:
     subtitles: list[str] = field(default_factory=list)
 
 
-_client: httpx.Client | None = None
+def _base_url() -> str:
+    cfg = load_config()
+    return cfg.mirrors.get("flixhq", _BASE_URL)
 
 
-def _get_client() -> httpx.Client:
-    global _client
-    if _client is None:
-        _client = httpx.Client(verify=False, follow_redirects=True, timeout=30)
-    return _client
+def _client():
+    cfg = load_config()
+    return get_client(proxy=cfg.proxy, name="flixhq")
 
 
 def _soup(html: str) -> BeautifulSoup:
@@ -43,20 +46,20 @@ def _soup(html: str) -> BeautifulSoup:
 def _extract_id(href: str) -> str:
     href = href.rstrip("/")
     if href.startswith("http"):
-        from urllib.parse import urlparse
         return urlparse(href).path.strip("/")
     return href
 
 
 def search(query: str, max_pages: int = 3) -> list[SearchResult]:
-    client = _get_client()
+    client = _client()
     base_slug = query.strip().replace(" ", "-")
+    base = _base_url()
     results = []
 
     for page in range(1, max_pages + 1):
-        url = f"{BASE_URL}/search/{base_slug}/page/{page}/" if page > 1 else f"{BASE_URL}/search/{base_slug}"
-        resp = client.get(url)
-        if resp.status_code != 200:
+        url = f"{base}/search/{base_slug}/page/{page}/" if page > 1 else f"{base}/search/{base_slug}"
+        resp = request_with_retry("GET", url)
+        if not resp or resp.status_code != 200:
             break
         soup = _soup(resp.text)
         posters = soup.select("div.film-poster")
@@ -106,16 +109,19 @@ def search(query: str, max_pages: int = 3) -> list[SearchResult]:
 
 
 def get_stream(media_id: str) -> StreamResult | None:
-    """Get stream URL from a movie page."""
-    client = _get_client()
-    resp = client.get(f"{BASE_URL}/{media_id}")
+    base = _base_url()
+    resp = request_with_retry("GET", f"{base}/{media_id}")
+    if not resp:
+        return None
 
     pl_match = re.search(r"const pl_url = '([^']+)'", resp.text)
     if not pl_match:
         return None
 
     pl_url = pl_match.group(1)
-    resp = client.get(pl_url)
+    resp = request_with_retry("GET", pl_url)
+    if not resp:
+        return None
     soup = _soup(resp.text)
 
     server_links = soup.select("ul > li > a[data-id]")
@@ -136,7 +142,9 @@ def get_stream(media_id: str) -> StreamResult | None:
     if not embed_url:
         return None
 
-    resp = client.get(embed_url)
+    resp = request_with_retry("GET", embed_url)
+    if not resp:
+        return None
     m3u8_match = re.search(r"https?://[^\s\"'<>]+\.m3u8[^\s\"'<>]*", resp.text)
     if not m3u8_match:
         return None

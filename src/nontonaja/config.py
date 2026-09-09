@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import tomllib
@@ -13,6 +13,8 @@ class Config:
     quality: int | None = None
     subs_language: str = "English"
     download_dir: str | None = None
+    proxy: str | None = None
+    mirrors: dict[str, str] = field(default_factory=dict)
 
 
 def _config_dir() -> Path:
@@ -24,11 +26,19 @@ def load_config() -> Config:
     cfg = Config()
     path = _config_dir() / "config.toml"
     if not path.exists():
-        return cfg
+        return _cfg_with_env(cfg)
     with open(path, "rb") as f:
         data = tomllib.load(f)
     cfg.subs_language = data.get("subs_language", cfg.subs_language)
     cfg.download_dir = data.get("download", cfg.download_dir)
+    cfg.proxy = data.get("proxy", cfg.proxy)
+    cfg.mirrors = data.get("mirrors", cfg.mirrors)
+    return _cfg_with_env(cfg)
+
+
+def _cfg_with_env(cfg: Config) -> Config:
+    if not cfg.proxy:
+        cfg.proxy = os.environ.get("NONTONAJA_PROXY") or os.environ.get("ALL_PROXY")
     return cfg
 
 

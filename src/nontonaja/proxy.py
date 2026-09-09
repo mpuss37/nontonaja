@@ -13,6 +13,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import httpx
 
+from .config import load_config
+
 _PORT = 0  # auto-assign
 
 
@@ -69,10 +71,7 @@ class _Handler(BaseHTTPRequestHandler):
 
 
 def _rewrite_m3u8(text: str, port: int) -> tuple[str, str, dict[int, str]]:
-    """Rewrite m3u8: CDN URLs -> localhost proxy with .mp4 extensions.
-
-    Returns (rewritten_m3u8, init_url, {index: segment_url}).
-    """
+    """Rewrite m3u8: CDN URLs -> localhost proxy with .mp4 extensions."""
     init_url = ""
     seg_map: dict[int, str] = {}
     new_lines: list[str] = []
@@ -103,17 +102,16 @@ class ProxyServer(ThreadingHTTPServer):
         self.playlist_data = playlist
         self.init_url = init_url
         self.seg_map = seg_map
+        cfg = load_config()
         self.httpx_client = httpx.Client(
             verify=False, follow_redirects=True, timeout=30,
-            limits=httpx.Limits(max_connections=20, max_keepalive_connections=10)
+            limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+            **({"proxy": cfg.proxy} if cfg.proxy else {}),
         )
 
 
 def start_proxy(master_url: str, headers: dict | None = None) -> tuple[str, ProxyServer]:
-    """Start proxy for an HLS stream.
-
-    Returns (proxy_playlist_url, server_instance).
-    """
+    """Start proxy for an HLS stream."""
     req_headers = {
         "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
     }
@@ -122,24 +120,25 @@ def start_proxy(master_url: str, headers: dict | None = None) -> tuple[str, Prox
     elif "playcdn.de" in master_url:
         req_headers["Referer"] = "https://playcdn.de/"
 
-    client = httpx.Client(verify=False, follow_redirects=True, timeout=15, headers=req_headers)
+    cfg = load_config()
+    client = httpx.Client(
+        verify=False, follow_redirects=True, timeout=15,
+        headers=req_headers,
+        **({"proxy": cfg.proxy} if cfg.proxy else {}),
+    )
 
-    # Fetch playlist
     resp = client.get(master_url)
     playlist_text = resp.text
 
-    # Check if this is a master playlist (has #EXT-X-STREAM-INF) or sub-playlist
     if "#EXT-X-STREAM-INF" in playlist_text:
-        # Master playlist — find highest quality sub-playlist
-        import re as _re
         from urllib.parse import urljoin
         lines = playlist_text.split("\n")
         best_bw = 0
         sub_url = ""
         for i, line in enumerate(lines):
-            match = _re.match(r"#EXT-X-STREAM-INF:(.*)", line)
+            match = re.match(r"#EXT-X-STREAM-INF:(.*)", line)
             if match and i + 1 < len(lines):
-                bw_match = _re.search(r"BANDWIDTH=(\d+)", match.group(1))
+                bw_match = re.search(r"BANDWIDTH=(\d+)", match.group(1))
                 bw = int(bw_match.group(1)) if bw_match else 0
                 candidate = lines[i + 1].strip()
                 if candidate and not candidate.startswith("#") and bw > best_bw:
@@ -149,14 +148,11 @@ def start_proxy(master_url: str, headers: dict | None = None) -> tuple[str, Prox
         if not sub_url:
             raise ValueError("No sub-playlist found in master m3u8")
 
-        # Fetch sub-playlist
         resp2 = client.get(sub_url)
         sub_text = resp2.text
     else:
-        # Already a sub-playlist
         sub_text = playlist_text
 
-    # Rewrite
     server = ProxyServer(("127.0.0.1", _PORT), _Handler, "", "", {})
     port = server.server_address[1]
 

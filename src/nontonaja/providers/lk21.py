@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
 
-import httpx
 from bs4 import BeautifulSoup
 
-BASE_URL = "https://tv12.lk21official.cc"
-P2P_API = "https://cloud.hownetwork.xyz/api2.php"
+from ..config import load_config
+from ..http import get_client, request_with_retry
+
+_BASE_URL = "https://tv12.lk21official.cc"
+_P2P_API = "https://cloud.hownetwork.xyz/api2.php"
 
 
 @dataclass
@@ -30,14 +33,14 @@ class StreamResult:
     source: str = ""
 
 
-_client: httpx.Client | None = None
+def _base_url() -> str:
+    cfg = load_config()
+    return cfg.mirrors.get("lk21", _BASE_URL)
 
 
-def _get_client() -> httpx.Client:
-    global _client
-    if _client is None:
-        _client = httpx.Client(verify=False, follow_redirects=True, timeout=30)
-    return _client
+def _client():
+    cfg = load_config()
+    return get_client(proxy=cfg.proxy, name="lk21")
 
 
 def _soup(html: str) -> BeautifulSoup:
@@ -79,8 +82,9 @@ def _parse_article(article) -> LK21Result | None:
 
 
 def browse(page: str = "populer") -> list[LK21Result]:
-    client = _get_client()
-    resp = client.get(f"{BASE_URL}/{page}")
+    resp = request_with_retry("GET", f"{_base_url()}/{page}")
+    if not resp:
+        return []
     soup = _soup(resp.text)
 
     results = []
@@ -92,12 +96,11 @@ def browse(page: str = "populer") -> list[LK21Result]:
 
 
 def search(query: str) -> list[LK21Result]:
-    """Search via JSON API, fallback to browse pages."""
-    client = _get_client()
+    base = _base_url()
+    client = _client()
     try:
-        # Get API base URL from search page
-        resp = client.get(f"{BASE_URL}/search", params={"s": query})
-        if resp.status_code != 200:
+        resp = request_with_retry("GET", f"{base}/search", params={"s": query})
+        if not resp or resp.status_code != 200:
             return _search_browse(query)
         soup = _soup(resp.text)
         body = soup.select_one("body")
@@ -105,12 +108,11 @@ def search(query: str) -> list[LK21Result]:
         if not api_base:
             return _search_browse(query)
 
-        # Call JSON API
         api_resp = client.get(
             f"{api_base.rstrip('/')}/search.php",
             params={"s": query, "page": 1},
             headers={
-                "Referer": f"{BASE_URL}/search?s={query.replace(' ', '+')}",
+                "Referer": f"{base}/search?s={query.replace(' ', '+')}",
                 "X-Requested-With": "XMLHttpRequest",
                 "Accept": "application/json",
             },
@@ -136,7 +138,6 @@ def search(query: str) -> list[LK21Result]:
 
 
 def _search_browse(query: str) -> list[LK21Result]:
-    """Fallback search: browse populer + latest, filter by query."""
     query_lower = query.lower()
     all_results = browse("populer") + browse("latest")
 
@@ -150,14 +151,13 @@ def _search_browse(query: str) -> list[LK21Result]:
 
 
 def get_p2p_stream(slug: str) -> StreamResult | None:
-    """Get P2P stream."""
-    client = _get_client()
-    resp = client.get(
-        f"{BASE_URL}/{slug}",
-        headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"}
+    ua = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+    resp = request_with_retry(
+        "GET",
+        f"{_base_url()}/{slug}",
+        headers={"User-Agent": ua},
     )
-
-    if resp.status_code != 200:
+    if not resp or resp.status_code != 200:
         return None
 
     html = resp.text
@@ -168,17 +168,16 @@ def get_p2p_stream(slug: str) -> StreamResult | None:
     if not player_urls:
         return None
 
-    # Try new videonode -> playcdn -> verify.php flow first
+    client = _client()
     for purl in player_urls:
         if "videonode" in purl or "p2p" in purl:
             try:
-                stream_res = _call_playcdn_api(purl, f"{BASE_URL}/{slug}")
+                stream_res = _call_playcdn_api(client, purl, f"{_base_url()}/{slug}", ua)
                 if stream_res:
                     return stream_res
             except Exception:
                 pass
 
-    # Legacy fallback for older links
     for purl in player_urls:
         vid = None
         match = re.search(r"hownetwork\.xyz/video\.php\?id=([^&\s]+)", purl)
@@ -188,16 +187,14 @@ def get_p2p_stream(slug: str) -> StreamResult | None:
         if match2:
             vid = match2.group(1)
         if vid:
-            res = _call_p2p_api(vid)
+            res = _call_p2p_api(client, vid)
             if res:
                 return res
 
     return None
 
 
-def _call_playcdn_api(purl: str, referer: str) -> StreamResult | None:
-    client = _get_client()
-    ua = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+def _call_playcdn_api(client, purl: str, referer: str, ua: str) -> StreamResult | None:
     vnode_resp = client.get(purl, headers={"Referer": referer, "User-Agent": ua})
     if vnode_resp.status_code != 200:
         return None
@@ -208,7 +205,6 @@ def _call_playcdn_api(purl: str, referer: str) -> StreamResult | None:
     if not playcdn_urls:
         return None
 
-    import json
     playcdn_url = playcdn_urls[0].replace("&amp;", "&")
     pcdn_resp = client.get(playcdn_url, headers={"Referer": purl, "User-Agent": ua})
     if pcdn_resp.status_code != 200:
@@ -244,15 +240,14 @@ def _call_playcdn_api(purl: str, referer: str) -> StreamResult | None:
     return None
 
 
-def _call_p2p_api(vid: str) -> StreamResult | None:
-    client = _get_client()
-    referer = f"{BASE_URL}/"
+def _call_p2p_api(client, vid: str) -> StreamResult | None:
+    referer = f"{_base_url()}/"
     try:
         resp = client.post(
-            P2P_API,
+            _P2P_API,
             params={"id": vid},
             data={"r": referer, "d": "tv12.lk21official.cc"},
-            headers={"Referer": referer, "Origin": BASE_URL},
+            headers={"Referer": referer, "Origin": _base_url()},
         )
         if resp.status_code != 200:
             return None

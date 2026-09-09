@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass
 from urllib.parse import urljoin
 
-import httpx
+from .http import get_client, request_with_retry
 
 
 @dataclass
@@ -39,8 +39,9 @@ def parse_m3u8(content: str, base_url: str = "") -> list[StreamQuality]:
 
 
 def select_quality(url: str, preferred: int | None = None, headers: dict | None = None) -> str:
-    client = httpx.Client(verify=False, follow_redirects=True)
-    resp = client.get(url, headers=headers or {})
+    resp = request_with_retry("GET", url, headers=headers or {})
+    if not resp:
+        return url
     qualities = parse_m3u8(resp.text, base_url=url)
 
     if not qualities:
