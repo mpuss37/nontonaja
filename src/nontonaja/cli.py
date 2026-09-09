@@ -271,43 +271,55 @@ def _search(query: str) -> tuple[list, list[str]]:
     """Unified search across all sources. Returns (results, errors)."""
     errors: list[str] = []
 
-    try:
-        lk21_results = lk21.search(query)
-    except Exception as e:
-        lk21_results = []
-        errors.append(f"LK21: {e}")
+    # Run all 3 providers in parallel for speed
+    from concurrent.futures import ThreadPoolExecutor
 
-    seen = set()
-    lk21_dedup = []
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        f_lk21 = ex.submit(lk21.search, query)
+        f_flixhq = ex.submit(flixhq.search, query)
+        f_idlix = ex.submit(idlix.search, query)
+
+        try:
+            lk21_results = f_lk21.result()
+        except Exception as e:
+            lk21_results = []
+            errors.append(f"LK21: {e}")
+
+        try:
+            flixhq_results = f_flixhq.result()
+        except Exception as e:
+            flixhq_results = []
+            errors.append(f"FlixHQ: {e}")
+
+        try:
+            idlix_results = f_idlix.result()
+        except Exception as e:
+            idlix_results = []
+            errors.append(f"IDLIX: {e}")
+
+    # Single-pass deduplication with pre-normalized keys
+    seen: set[str] = set()
+    merged: list = []
+
+    def _norm(title: str) -> str:
+        return re.sub(r"\s*\(\d{4}\)$", "", title).lower().strip()
+
     for r in lk21_results:
-        key = re.sub(r"\s*\(\d{4}\)$", "", r.title).lower().strip()
+        key = _norm(r.title)
         if key not in seen:
             seen.add(key)
-            lk21_dedup.append(r)
-
-    try:
-        flixhq_results = flixhq.search(query)
-    except Exception as e:
-        flixhq_results = []
-        errors.append(f"FlixHQ: {e}")
-
-    try:
-        idlix_results = idlix.search(query)
-    except Exception as e:
-        idlix_results = []
-        errors.append(f"IDLIX: {e}")
-
-    merged = list(lk21_dedup)
-    lk21_titles = {re.sub(r"\s*\(\d{4}\)$", "", r.title).lower().strip() for r in lk21_dedup}
-    for r in flixhq_results:
-        key = re.sub(r"\s*\(\d{4}\)$", "", r.title).lower().strip()
-        if key not in lk21_titles:
             merged.append(r)
 
-    existing_titles = {re.sub(r"\s*\(\d{4}\)$", "", r.title).lower().strip() for r in merged}
+    for r in flixhq_results:
+        key = _norm(r.title)
+        if key not in seen:
+            seen.add(key)
+            merged.append(r)
+
     for r in idlix_results:
-        key = re.sub(r"\s*\(\d{4}\)$", "", r.title).lower().strip()
-        if key not in existing_titles:
+        key = _norm(r.title)
+        if key not in seen:
+            seen.add(key)
             merged.append(r)
 
     q_norm = query.lower().strip()
@@ -321,7 +333,7 @@ def _search(query: str) -> tuple[list, list[str]]:
         except ValueError:
             year = 0
 
-        clean = re.sub(r"\s*\(\d{4}\)$", "", title).lower().strip()
+        clean = _norm(title)
         words = set(re.findall(r"\w+", clean))
 
         is_exact = 1 if clean == q_norm else 0

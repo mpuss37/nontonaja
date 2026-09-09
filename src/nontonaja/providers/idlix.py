@@ -72,7 +72,13 @@ def _countdown(seconds: int, title: str = "") -> None:
 
 def search(query: str) -> list[SearchResult]:
     resp = request_with_retry(
-        "GET", f"{_api_base()}/search", params={"q": query}, headers={"User-Agent": _UA}
+        "GET",
+        f"{_api_base()}/search",
+        params={"q": query},
+        headers={"User-Agent": _UA},
+        timeout=10,
+        min_delay=0.5,
+        max_retries=2,
     )
     if not resp or resp.status_code != 200:
         return []

@@ -108,7 +108,9 @@ def search(query: str) -> list[LK21Result]:
     base = _base_url()
     client = _client()
     try:
-        resp = request_with_retry("GET", f"{base}/search", params={"s": query})
+        resp = request_with_retry(
+            "GET", f"{base}/search", params={"s": query}, timeout=10, min_delay=0.5, max_retries=2
+        )
         if not resp or resp.status_code != 200:
             return _search_browse(query)
         soup = _soup(resp.text)

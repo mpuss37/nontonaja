@@ -34,19 +34,21 @@ def request_with_retry(
     *,
     proxy: str | None = None,
     max_retries: int = 3,
+    timeout: float = 30,
+    min_delay: float = 1.0,
     **kwargs,
 ) -> httpx.Response | None:
     client = get_client(proxy)
     for attempt in range(max_retries):
         try:
-            resp = client.request(method, url, **kwargs)
+            resp = client.request(method, url, timeout=timeout, **kwargs)
             if resp.status_code < 500:
                 return resp
             if attempt < max_retries - 1:
-                time.sleep(1 * (attempt + 1))
+                time.sleep(min_delay * (attempt + 1))
         except (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.RequestError):
             if attempt < max_retries - 1:
-                time.sleep(1 * (attempt + 1))
+                time.sleep(min_delay * (attempt + 1))
     return None
 
 

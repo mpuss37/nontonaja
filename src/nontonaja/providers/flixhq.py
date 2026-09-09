@@ -50,14 +50,16 @@ def _extract_id(href: str) -> str:
     return href
 
 
-def search(query: str, max_pages: int = 3) -> list[SearchResult]:
+def search(query: str, max_pages: int = 2) -> list[SearchResult]:
     client = _client()
     base_slug = query.strip().replace(" ", "-")
     base = _base_url()
     results = []
 
     for page in range(1, max_pages + 1):
-        url = f"{base}/search/{base_slug}/page/{page}/" if page > 1 else f"{base}/search/{base_slug}"
+        url = (
+            f"{base}/search/{base_slug}/page/{page}/" if page > 1 else f"{base}/search/{base_slug}"
+        )
         resp = request_with_retry("GET", url)
         if not resp or resp.status_code != 200:
             break
@@ -101,6 +103,9 @@ def search(query: str, max_pages: int = 3) -> list[SearchResult]:
                 page_results[i].duration = spans[2].text.strip()
 
         results.extend(page_results)
+        # Early stop: 25 results is more than enough for search
+        if len(results) >= 25:
+            break
         pagination = soup.select("ul.pagination li")
         if not pagination or page >= len(pagination):
             break
@@ -149,8 +154,6 @@ def get_stream(media_id: str) -> StreamResult | None:
     if not m3u8_match:
         return None
 
-    subtitles = list(set(
-        re.findall(r"https?://srt\.[^\s\"'<>]+\.vtt[^\s\"'<>]*", resp.text)
-    ))
+    subtitles = list(set(re.findall(r"https?://srt\.[^\s\"'<>]+\.vtt[^\s\"'<>]*", resp.text)))
 
     return StreamResult(url=m3u8_match.group(0), subtitles=subtitles)
