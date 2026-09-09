@@ -1,6 +1,6 @@
-"""Local HTTP proxy to rewrite IDLIX HLS segments with .mp4 extensions.
+"""Local HTTP proxy to rewrite HLS segments with .mp4 extensions.
 
-IDLIX CDN serves CMAF segments with obfuscated extensions (.jpg, .css, .js).
+CDN serves CMAF segments with obfuscated extensions (.jpg, .css, .js).
 ffmpeg rejects these extensions. This proxy rewrites the m3u8 to point to
 localhost with .mp4 extensions, then proxies the actual CDN content.
 """
@@ -110,7 +110,7 @@ class ProxyServer(ThreadingHTTPServer):
 
 
 def start_proxy(master_url: str, headers: dict | None = None) -> tuple[str, ProxyServer]:
-    """Start proxy for an HLS stream (IDLIX/LK21).
+    """Start proxy for an HLS stream.
 
     Returns (proxy_playlist_url, server_instance).
     """

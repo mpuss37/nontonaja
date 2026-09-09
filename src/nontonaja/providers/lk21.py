@@ -92,7 +92,7 @@ def browse(page: str = "populer") -> list[LK21Result]:
 
 
 def search(query: str) -> list[LK21Result]:
-    """Search LK21 via JSON API, fallback to browse pages."""
+    """Search via JSON API, fallback to browse pages."""
     client = _get_client()
     try:
         # Get API base URL from search page
@@ -150,7 +150,7 @@ def _search_browse(query: str) -> list[LK21Result]:
 
 
 def get_p2p_stream(slug: str) -> StreamResult | None:
-    """Get P2P stream from LK21 movie."""
+    """Get P2P stream."""
     client = _get_client()
     resp = client.get(
         f"{BASE_URL}/{slug}",

@@ -130,9 +130,9 @@ def _pick_action() -> str:
 
 def _pick_source():
     sources = [
-        "1. 480p   — LK21 P2P",
-        "2. 720p   — FlixHQ M3U8",
-        "3. 1080p  — FlixHQ M3U8",
+        "1. 480p",
+        "2. 720p",
+        "3. 1080p",
     ]
     selected = _fzf_menu(sources, prompt="Select Quality/Source: ")
     if selected:
@@ -144,9 +144,9 @@ def _pick_source():
             return "flixhq", 1080
 
     print("Quality / Source:")
-    print("  1. 480p   — LK21 P2P")
-    print("  2. 720p   — FlixHQ M3U8")
-    print("  3. 1080p  — FlixHQ M3U8")
+    print("  1. 480p")
+    print("  2. 720p")
+    print("  3. 1080p")
     while True:
         try:
             choice = int(input("Source: "))
@@ -162,7 +162,7 @@ def _pick_source():
 
 
 def _find_flixhq_match(title: str, year: str = "", media_type: str = "movie"):
-    """Find matching FlixHQ item by testing progressive queries and verifying title/type."""
+    """Find matching item by testing progressive queries and verifying title/type."""
     clean = re.sub(r"\s*\(\d{4}\)$", "", title).strip()
     title_norm = clean.lower()
     title_words = [w for w in re.findall(r"\w+", title_norm) if w not in ("the", "a", "an")]
@@ -261,7 +261,7 @@ def _find_flixhq_match(title: str, year: str = "", media_type: str = "movie"):
 
 
 def _search(query: str) -> list:
-    """Unified search: LK21 + FlixHQ + IDLIX."""
+    """Unified search across all sources."""
     try:
         lk21_results = lk21.search(query)
     except Exception:
@@ -329,7 +329,7 @@ def _play(stream_url: str, title: str, subtitles: list[str], headers: dict | Non
     proxy_server = None
     client = httpx.Client(verify=False, follow_redirects=True, timeout=15)
 
-    # Start local proxy for IDLIX / LK21 streams (rewrites .jpg/.css/.pict extensions to .ts/.mp4)
+    # Start local proxy for HLS streams (rewrites .jpg/.css/.pict extensions to .ts/.mp4)
     local_stream = stream_url
     try:
         from .proxy import start_proxy
@@ -443,11 +443,12 @@ def _get_stream(selected, quality, source_choice) -> tuple[str, list[str], dict]
                 return None
             result = lk21.get_p2p_stream(matched.id)
         if result and result.url:
-            url = select_quality(result.url, quality, headers=result.headers)
+            try:
+                url = select_quality(result.url, quality, headers=result.headers)
+            except (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.RequestError):
+                url = result.url
             return (url, result.subtitles, result.headers)
 
-        # Fallback to FlixHQ or IDLIX if LK21 P2P is unavailable/blocked
-        print("LK21 stream tidak tersedia, mencoba fallback ke FlixHQ/IDLIX...")
         fallback = _get_stream(selected, quality or 720, "flixhq")
         if fallback:
             return fallback
@@ -461,7 +462,7 @@ def _get_stream(selected, quality, source_choice) -> tuple[str, list[str], dict]
                 print(f"get_stream error: {e}")
                 result = None
         else:
-            # Cross-source: search IDLIX by title
+            # Cross-source search by title
             clean_title = re.sub(r"\s*\(\d{4}\)$", "", selected.title).strip()
             try:
                 results = idlix.search(clean_title)
@@ -490,16 +491,16 @@ def _get_stream(selected, quality, source_choice) -> tuple[str, list[str], dict]
                 print(f"no match for '{selected.title}'")
                 return None
             try:
-                result = idlix.get_stream(matched.id, matched.media_type, selected.title)
+                result = idlix.get_stream(selected.id, getattr(selected, "media_type", "movie"), selected.title)
             except Exception as e:
                 print(f"get_stream error: {e}")
                 result = None
         if result and result.url:
-            # IDLIX: pass master URL directly to proxy (proxy handles quality selection)
+            # Pass master URL directly to proxy (proxy handles quality selection)
             url = result.url
             return (url, result.subtitles, {})
     else:
-        # FlixHQ: try selected ID directly, then search by title
+        # Try selected ID directly, then search by title
         media_id = getattr(selected, "id", None)
         source = getattr(selected, "source", "")
 
@@ -514,8 +515,11 @@ def _get_stream(selected, quality, source_choice) -> tuple[str, list[str], dict]
                 result = flixhq.get_stream(matched.id)
 
         if result and result.url:
-            url = select_quality(result.url, quality)
-            # Add IDLIX subtitles (sub Indo) to FlixHQ
+            try:
+                url = select_quality(result.url, quality)
+            except (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.RequestError):
+                url = result.url
+            # Merge additional subtitles
             subs = list(result.subtitles)
             try:
                 clean_title2 = re.sub(r"\s*\(\d{4}\)$", "", selected.title).strip()
@@ -532,7 +536,7 @@ def _get_stream(selected, quality, source_choice) -> tuple[str, list[str], dict]
                 pass
             return (url, subs, {})
 
-        # FlixHQ tidak punya film ini, fallback ke IDLIX stream
+        # Fallback
         fallback = _get_stream(selected, quality, "idlix")
         if fallback:
             return fallback

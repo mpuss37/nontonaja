@@ -65,7 +65,7 @@ def _headers() -> dict:
 
 
 def _countdown(seconds: int, title: str = "") -> None:
-    """Wait for IDLIX unlock timer (silent — progress bar handled by cli.py)."""
+    """Wait for unlock timer (silent — progress bar handled by cli.py)."""
     time.sleep(max(seconds, 0))
 
 
