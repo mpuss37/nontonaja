@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import dataclass, field
 
@@ -212,47 +211,71 @@ def get_p2p_stream(slug: str) -> StreamResult | None:
 
 
 def _call_playcdn_api(client, purl: str, referer: str, ua: str) -> StreamResult | None:
+    # videonode now uses /api.php to get embedUrl
     vnode_resp = client.get(purl, headers={"Referer": referer, "User-Agent": ua})
     if vnode_resp.status_code != 200:
         return None
 
-    playcdn_urls = re.findall(r'<iframe[^>]+src="([^"]+playcdn[^"]+)"', vnode_resp.text)
-    if not playcdn_urls:
-        playcdn_urls = re.findall(r'https?://playcdn\.de/[^\s"\'<>]+', vnode_resp.text)
-    if not playcdn_urls:
+    # Extract host + id from purl (e.g. https://videonode.de/iframe3/p2p/X1mjaSZ9...)
+    host_match = re.search(r"videonode\.de/iframe3/([^/]+)/([^/?\s]+)", purl)
+    if not host_match:
         return None
+    host = host_match.group(1)
+    vid = host_match.group(2)
 
-    playcdn_url = playcdn_urls[0].replace("&amp;", "&")
-    pcdn_resp = client.get(playcdn_url, headers={"Referer": purl, "User-Agent": ua})
-    if pcdn_resp.status_code != 200:
-        return None
-
-    token_match = re.search(r"var\s+data\s*=\s*(\{.*?\});", pcdn_resp.text)
-    if not token_match:
+    # POST to videonode API to get embedUrl
+    api_resp = client.post(
+        "https://videonode.de/api.php",
+        data={"host": host, "id": vid},
+        headers={
+            "Referer": purl,
+            "User-Agent": ua,
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
+    )
+    if api_resp.status_code != 200:
         return None
 
     try:
-        data = json.loads(token_match.group(1))
-        verify_resp = client.post(
-            "https://playcdn.de/verify.php",
-            json={"token": data["token"], "is_ios": False},
-            headers={
-                "Referer": playcdn_url,
-                "Origin": "https://playcdn.de",
-                "Content-Type": "application/json",
-                "User-Agent": ua,
-            },
-        )
-        if verify_resp.status_code == 200:
-            res_json = verify_resp.json()
-            if res_json.get("status") == "success" and res_json.get("fileUrl"):
-                return StreamResult(
-                    url=res_json["fileUrl"],
-                    headers={"Referer": "https://playcdn.de/", "User-Agent": ua},
-                    source="lk21",
-                )
+        embed_url = api_resp.json().get("embedUrl")
     except Exception:
-        pass
+        return None
+    if not embed_url:
+        return None
+
+    # Fetch playcdn page
+    pcdn_resp = client.get(embed_url, headers={"Referer": purl, "User-Agent": ua})
+    if pcdn_resp.status_code != 200:
+        return None
+
+    # Look for token in the page
+    token_match = re.search(r'token["\']?\s*[:=]\s*["\']([A-Za-z0-9_-]{10,})', pcdn_resp.text)
+    if not token_match:
+        # Also try data-token attribute
+        token_match = re.search(r'data-token=["\']([A-Za-z0-9_-]{10,})["\']', pcdn_resp.text)
+    if not token_match:
+        return None
+
+    token = token_match.group(1)
+
+    verify_resp = client.post(
+        "https://playcdn.de/verify.php",
+        json={"token": token, "is_ios": False},
+        headers={
+            "Referer": embed_url,
+            "Origin": "https://playcdn.de",
+            "Content-Type": "application/json",
+            "User-Agent": ua,
+        },
+    )
+    if verify_resp.status_code == 200:
+        res_json = verify_resp.json()
+        if res_json.get("status") == "success" and res_json.get("fileUrl"):
+            return StreamResult(
+                url=res_json["fileUrl"],
+                headers={"Referer": "https://playcdn.de/", "User-Agent": ua},
+                source="lk21",
+            )
 
     return None
 

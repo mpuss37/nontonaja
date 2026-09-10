@@ -58,14 +58,19 @@ def parse_m3u8(content: str, base_url: str = "") -> list[StreamQuality]:
 
 
 def pick_variant(qualities: list[StreamQuality], preferred: int | None = None) -> StreamQuality:
-    """Pick variant for preferred height: exact match, else closest (tie -> higher)."""
+    """Pick variant for preferred height: exact match, else closest below, else closest above."""
     if preferred:
         for q in qualities:
             if q.height == preferred:
                 return q
-        # closest by absolute diff; tie -> higher bandwidth/height
-        best = min(qualities, key=lambda q: (abs(q.height - preferred), -q.bandwidth))
-        return best
+        # closest below
+        below = [q for q in qualities if q.height < preferred]
+        if below:
+            return max(below, key=lambda q: q.height)
+        # closest above (tie -> higher bandwidth)
+        above = [q for q in qualities if q.height > preferred]
+        if above:
+            return min(above, key=lambda q: (q.height, -q.bandwidth))
     return qualities[0]
 
 
