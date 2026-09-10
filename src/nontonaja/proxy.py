@@ -110,8 +110,10 @@ class ProxyServer(ThreadingHTTPServer):
         )
 
 
-def start_proxy(master_url: str, headers: dict | None = None) -> tuple[str, ProxyServer]:
-    """Start proxy for an HLS stream."""
+def start_proxy(
+    master_url: str, headers: dict | None = None, preferred: int | None = None
+) -> tuple[str, ProxyServer]:
+    """Start proxy for an HLS stream. preferred = desired height (480/720/1080)."""
     req_headers = {
         "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
     }
@@ -131,22 +133,12 @@ def start_proxy(master_url: str, headers: dict | None = None) -> tuple[str, Prox
     playlist_text = resp.text
 
     if "#EXT-X-STREAM-INF" in playlist_text:
-        from urllib.parse import urljoin
-        lines = playlist_text.split("\n")
-        best_bw = 0
-        sub_url = ""
-        for i, line in enumerate(lines):
-            match = re.match(r"#EXT-X-STREAM-INF:(.*)", line)
-            if match and i + 1 < len(lines):
-                bw_match = re.search(r"BANDWIDTH=(\d+)", match.group(1))
-                bw = int(bw_match.group(1)) if bw_match else 0
-                candidate = lines[i + 1].strip()
-                if candidate and not candidate.startswith("#") and bw > best_bw:
-                    best_bw = bw
-                    sub_url = urljoin(master_url, candidate)
+        from .quality import parse_m3u8, pick_variant
 
-        if not sub_url:
+        qualities = parse_m3u8(playlist_text, base_url=master_url)
+        if not qualities:
             raise ValueError("No sub-playlist found in master m3u8")
+        sub_url = pick_variant(qualities, preferred).url
 
         resp2 = client.get(sub_url)
         sub_text = resp2.text

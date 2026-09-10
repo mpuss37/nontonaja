@@ -54,7 +54,7 @@ class TestDownloadAndCli(unittest.TestCase):
         with patch("builtins.input", side_effect=["1"]):
             src, q = _pick_source()
             self.assertEqual(src, "lk21")
-            self.assertIsNone(q)
+            self.assertEqual(q, 480)
 
         with patch("builtins.input", side_effect=["2"]):
             src, q = _pick_source()

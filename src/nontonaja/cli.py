@@ -140,7 +140,7 @@ def _pick_source():
     selected = _fzf_menu(sources, prompt="Select Quality/Source: ")
     if selected:
         if selected.startswith("1") or "480p" in selected:
-            return "lk21", None
+            return "lk21", 480
         elif selected.startswith("2") or "720p" in selected:
             return "flixhq", 720
         elif selected.startswith("3") or "1080p" in selected:
@@ -154,7 +154,7 @@ def _pick_source():
         try:
             choice = int(input("Source: "))
             if choice == 1:
-                return "lk21", None
+                return "lk21", 480
             elif choice == 2:
                 return "flixhq", 720
             elif choice == 3:
@@ -353,6 +353,7 @@ def _play(
     subtitles: list[str],
     headers: dict | None = None,
     detach: bool = False,
+    quality: int | None = None,
 ) -> None:
     sub_dir = tempfile.mkdtemp(prefix="nontonaja-subs-")
     local_subs = []
@@ -364,7 +365,7 @@ def _play(
     try:
         from .proxy import start_proxy
 
-        local_stream, proxy_server = start_proxy(stream_url, headers=headers)
+        local_stream, proxy_server = start_proxy(stream_url, headers=headers, preferred=quality)
         print(f"proxy ready: {local_stream}")
     except Exception as e:
         print(f"proxy failed: {e}")
@@ -686,7 +687,7 @@ def run(args: argparse.Namespace) -> None:
         if action == "exit":
             break
         elif action == "play":
-            _play(stream_url, selected.title, subtitles, headers=headers, detach=True)
+            _play(stream_url, selected.title, subtitles, headers=headers, detach=True, quality=quality)
         elif action == "download":
             from .download import download
 
@@ -703,7 +704,7 @@ def run(args: argparse.Namespace) -> None:
         elif action == "both":
             from .download import download
 
-            _play(stream_url, selected.title, subtitles, headers=headers, detach=True)
+            _play(stream_url, selected.title, subtitles, headers=headers, detach=True, quality=quality)
             download_dir = args.output or config.download_dir or os.getcwd()
             download(
                 stream_url,
