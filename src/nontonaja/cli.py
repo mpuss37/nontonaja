@@ -596,6 +596,11 @@ def _prepare_stream(selected, quality, source_choice, title: str = ""):
     t = threading.Thread(target=_fetch, daemon=True)
     t.start()
 
+    # IDLIX prints its own unlock countdown on stdout; skip the bar to avoid clash.
+    if source_choice == "idlix":
+        done.wait()
+        return result_holder[0]
+
     elapsed = 0.0
     interval = 0.25
     # Use asymptotic progress: approaches 95% but never reaches 100% until done
@@ -687,7 +692,9 @@ def run(args: argparse.Namespace) -> None:
         if action == "exit":
             break
         elif action == "play":
-            _play(stream_url, selected.title, subtitles, headers=headers, detach=True, quality=quality)
+            _play(
+                stream_url, selected.title, subtitles, headers=headers, detach=True, quality=quality
+            )
         elif action == "download":
             from .download import download
 
@@ -704,7 +711,9 @@ def run(args: argparse.Namespace) -> None:
         elif action == "both":
             from .download import download
 
-            _play(stream_url, selected.title, subtitles, headers=headers, detach=True, quality=quality)
+            _play(
+                stream_url, selected.title, subtitles, headers=headers, detach=True, quality=quality
+            )
             download_dir = args.output or config.download_dir or os.getcwd()
             download(
                 stream_url,

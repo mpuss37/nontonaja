@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 
 from ..config import load_config
-from ..http import get_client, request_with_retry
+from ..http import request_with_retry
 
 _BASE_URL = "https://flixhq.ws"
 
@@ -34,11 +34,6 @@ def _base_url() -> str:
     return cfg.mirrors.get("flixhq", _BASE_URL)
 
 
-def _client():
-    cfg = load_config()
-    return get_client(proxy=cfg.proxy, name="flixhq")
-
-
 def _soup(html: str) -> BeautifulSoup:
     return BeautifulSoup(html, "html.parser")
 
@@ -51,7 +46,7 @@ def _extract_id(href: str) -> str:
 
 
 def search(query: str, max_pages: int = 2) -> list[SearchResult]:
-    client = _client()
+    cfg = load_config()
     base_slug = query.strip().replace(" ", "-")
     base = _base_url()
     results = []
@@ -60,7 +55,7 @@ def search(query: str, max_pages: int = 2) -> list[SearchResult]:
         url = (
             f"{base}/search/{base_slug}/page/{page}/" if page > 1 else f"{base}/search/{base_slug}"
         )
-        resp = request_with_retry("GET", url)
+        resp = request_with_retry("GET", url, proxy=cfg.proxy)
         if not resp or resp.status_code != 200:
             break
         soup = _soup(resp.text)
@@ -114,8 +109,9 @@ def search(query: str, max_pages: int = 2) -> list[SearchResult]:
 
 
 def get_stream(media_id: str) -> StreamResult | None:
+    cfg = load_config()
     base = _base_url()
-    resp = request_with_retry("GET", f"{base}/{media_id}")
+    resp = request_with_retry("GET", f"{base}/{media_id}", proxy=cfg.proxy)
     if not resp:
         return None
 
@@ -124,7 +120,7 @@ def get_stream(media_id: str) -> StreamResult | None:
         return None
 
     pl_url = pl_match.group(1)
-    resp = request_with_retry("GET", pl_url)
+    resp = request_with_retry("GET", pl_url, proxy=cfg.proxy)
     if not resp:
         return None
     soup = _soup(resp.text)
@@ -147,7 +143,7 @@ def get_stream(media_id: str) -> StreamResult | None:
     if not embed_url:
         return None
 
-    resp = request_with_retry("GET", embed_url)
+    resp = request_with_retry("GET", embed_url, proxy=cfg.proxy)
     if not resp:
         return None
     m3u8_match = re.search(r"https?://[^\s\"'<>]+\.m3u8[^\s\"'<>]*", resp.text)

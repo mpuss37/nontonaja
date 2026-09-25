@@ -4,7 +4,8 @@ import re
 from dataclasses import dataclass
 from urllib.parse import urljoin
 
-from .http import get_client, request_with_retry
+from .config import load_config
+from .http import request_with_retry
 
 
 @dataclass
@@ -75,7 +76,8 @@ def pick_variant(qualities: list[StreamQuality], preferred: int | None = None) -
 
 
 def select_quality(url: str, preferred: int | None = None, headers: dict | None = None) -> str:
-    resp = request_with_retry("GET", url, headers=headers or {})
+    cfg = load_config()
+    resp = request_with_retry("GET", url, headers=headers or {}, proxy=cfg.proxy)
     if not resp:
         return url
     qualities = parse_m3u8(resp.text, base_url=url)

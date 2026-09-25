@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from urllib.parse import urlparse
 
 import httpx
 from bs4 import BeautifulSoup
@@ -87,8 +88,9 @@ def _parse_article(article) -> LK21Result | None:
 
 
 def browse(page: str = "populer") -> list[LK21Result]:
+    cfg = load_config()
     try:
-        resp = request_with_retry("GET", f"{_base_url()}/{page}")
+        resp = request_with_retry("GET", f"{_base_url()}/{page}", proxy=cfg.proxy)
     except httpx.ConnectError:
         return []
     if not resp:
@@ -104,11 +106,18 @@ def browse(page: str = "populer") -> list[LK21Result]:
 
 
 def search(query: str) -> list[LK21Result]:
+    cfg = load_config()
     base = _base_url()
     client = _client()
     try:
         resp = request_with_retry(
-            "GET", f"{base}/search", params={"s": query}, timeout=10, min_delay=0.5, max_retries=2
+            "GET",
+            f"{base}/search",
+            params={"s": query},
+            proxy=cfg.proxy,
+            timeout=10,
+            min_delay=0.5,
+            max_retries=2,
         )
         if not resp or resp.status_code != 200:
             return _search_browse(query)
@@ -167,11 +176,13 @@ def _search_browse(query: str) -> list[LK21Result]:
 
 
 def get_p2p_stream(slug: str) -> StreamResult | None:
+    cfg = load_config()
     ua = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
     resp = request_with_retry(
         "GET",
         f"{_base_url()}/{slug}",
         headers={"User-Agent": ua},
+        proxy=cfg.proxy,
     )
     if not resp or resp.status_code != 200:
         return None
@@ -211,7 +222,7 @@ def get_p2p_stream(slug: str) -> StreamResult | None:
 
 
 def _call_playcdn_api(client, purl: str, referer: str, ua: str) -> StreamResult | None:
-    # videonode now uses /api.php to get embedUrl
+    # videonode exposes /api.php to resolve an iframe URL into a playcdn embed
     vnode_resp = client.get(purl, headers={"Referer": referer, "User-Agent": ua})
     if vnode_resp.status_code != 200:
         return None
@@ -223,7 +234,6 @@ def _call_playcdn_api(client, purl: str, referer: str, ua: str) -> StreamResult 
     host = host_match.group(1)
     vid = host_match.group(2)
 
-    # POST to videonode API to get embedUrl
     api_resp = client.post(
         "https://videonode.de/api.php",
         data={"host": host, "id": vid},
@@ -243,33 +253,21 @@ def _call_playcdn_api(client, purl: str, referer: str, ua: str) -> StreamResult 
     if not embed_url:
         return None
 
-    # Fetch playcdn page
-    pcdn_resp = client.get(embed_url, headers={"Referer": purl, "User-Agent": ua})
-    if pcdn_resp.status_code != 200:
+    # playcdn embed URL is https://playcdn.de/<SLUG>; the stream JSON comes from
+    # GET https://playcdn.de/verify/<SLUG> (the old POST verify.php is gone)
+    slug = urlparse(embed_url).path.strip("/").split("/")[-1]
+    if not slug:
         return None
 
-    # Look for token in the page
-    token_match = re.search(r'token["\']?\s*[:=]\s*["\']([A-Za-z0-9_-]{10,})', pcdn_resp.text)
-    if not token_match:
-        # Also try data-token attribute
-        token_match = re.search(r'data-token=["\']([A-Za-z0-9_-]{10,})["\']', pcdn_resp.text)
-    if not token_match:
-        return None
-
-    token = token_match.group(1)
-
-    verify_resp = client.post(
-        "https://playcdn.de/verify.php",
-        json={"token": token, "is_ios": False},
-        headers={
-            "Referer": embed_url,
-            "Origin": "https://playcdn.de",
-            "Content-Type": "application/json",
-            "User-Agent": ua,
-        },
+    verify_resp = client.get(
+        f"https://playcdn.de/verify/{slug}",
+        headers={"Referer": embed_url, "User-Agent": ua},
     )
     if verify_resp.status_code == 200:
-        res_json = verify_resp.json()
+        try:
+            res_json = verify_resp.json()
+        except Exception:
+            return None
         if res_json.get("status") == "success" and res_json.get("fileUrl"):
             return StreamResult(
                 url=res_json["fileUrl"],

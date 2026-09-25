@@ -19,13 +19,30 @@ def _resolve_doh(domain: str) -> str | None:
     return _doh_resolve(domain)
 
 
-def _test_http(url: str, timeout: float = 8.0) -> tuple[str, str]:
-    """Test HTTP connectivity. Returns (status, detail)."""
+_BLOCKED_STATUSES = {401, 403, 407, 429, 451, 503}
+
+
+def _test_http(url: str, timeout: float = 8.0, proxy: str | None = None) -> tuple[str, str]:
+    """Test HTTP connectivity. Returns (status, detail).
+
+    HTTP 4xx/5xx is reported as BLOCKED (not OK): the host responded but
+    refused the request, which is what an ISP/Cloudflare block looks like.
+    """
     headers = {
         "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
     }
+    kwargs: dict = {"timeout": timeout, "verify": False, "follow_redirects": True, "headers": headers}
+    if proxy:
+        kwargs["proxy"] = proxy
     try:
-        resp = httpx.get(url, timeout=timeout, verify=False, follow_redirects=True, headers=headers)
+        resp = httpx.get(url, **kwargs)
+        if resp.status_code in _BLOCKED_STATUSES:
+            return (
+                f"HTTP {resp.status_code}",
+                f"BLOCKED ({len(resp.text)} bytes) - server menolak request",
+            )
+        if resp.status_code >= 400:
+            return f"HTTP {resp.status_code}", f"ERROR ({len(resp.text)} bytes)"
         return f"HTTP {resp.status_code}", f"OK ({len(resp.text)} bytes)"
     except httpx.ConnectTimeout:
         return "TIMEOUT", "Connection timed out"
@@ -81,11 +98,15 @@ def run_diagnostics() -> None:
     # --- Section 2: HTTP Connectivity ---
     print("\n2. HTTP CONNECTIVITY")
     print("-" * 70)
+    if config.proxy:
+        print(f"  (via proxy: {config.proxy})")
     print(f"  {'Site':<20} {'Status':<12} {'Detail'}")
     print(f"  {'─' * 20} {'─' * 12} {'─' * 35}")
 
-    for _, url, label in _DOMAINS:
-        status, detail = _test_http(url)
+    http_results: list[tuple[str, str, str, str]] = []
+    for domain, url, label in _DOMAINS:
+        status, detail = _test_http(url, proxy=config.proxy)
+        http_results.append((domain, status, detail, label))
         print(f"  {label:<20} {status:<12} {detail}")
 
     # --- Section 3: Proxy ---
@@ -113,12 +134,17 @@ def run_diagnostics() -> None:
     print("=" * 70)
 
     issues = []
-    for domain, url, label in _DOMAINS:
-        doh_ip = _resolve_doh(domain)
-        status, _ = _test_http(url)
-        if status.startswith(("TIMEOUT", "CONN_ERR")):
+    blocked = False
+    unreachable = False
+    for domain, status, detail, label in http_results:
+        if detail.startswith("BLOCKED"):
+            blocked = True
+            issues.append(f"{label} ({domain}) - {status} (request ditolak server)")
+        elif status.startswith(("TIMEOUT", "CONN_ERR")):
+            unreachable = True
             issues.append(f"{label} ({domain}) - {status}")
-        elif doh_ip and doh_ip != _DOMAIN_IPS.get(domain, ["?"])[0]:
+        doh_ip = _resolve_doh(domain)
+        if doh_ip and doh_ip != _DOMAIN_IPS.get(domain, ["?"])[0]:
             issues.append(
                 f"{label} ({domain}) - IP changed: {_DOMAIN_IPS.get(domain, ['?'])[0]} -> {doh_ip}"
             )
@@ -128,7 +154,15 @@ def run_diagnostics() -> None:
         for issue in issues:
             print(f"    - {issue}")
         print("\n  Suggestions:")
-        if any("TIMEOUT" in i or "CONN_ERR" in i for i in issues):
+        if blocked:
+            if config.proxy:
+                print("    - Situs menjawab 403/blocked lewat proxy. Coba proxy lain / VPN penuh.")
+            else:
+                print("    - Situs menjawab 403 (diblokir ISP/Cloudflare).")
+                print("      Set a proxy in ~/.config/nontonaja/config.toml:")
+                print('      proxy = "socks5://127.0.0.1:1080"')
+                print("      lalu jalankan ulang 'nontonaja --diag' untuk verifikasi.")
+        if unreachable:
             print("    - Sites are unreachable. Try setting up a proxy:")
             print('      Edit ~/.config/nontonaja/config.toml: proxy = "socks5://127.0.0.1:1080"')
         if any("IP changed" in i for i in issues):
