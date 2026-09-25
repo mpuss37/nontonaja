@@ -141,6 +141,27 @@ def _resolve_episode(slug: str, season: int = 1, episode: int = 1) -> dict | Non
     return ep if ep and ep.get("id") else None
 
 
+def episode_counts(slug: str, total_seasons: int = 0) -> dict[int, int]:
+    """Return {season_number: episode_count} for a series slug."""
+    client = _client()
+    api = _api_base()
+    h = _headers()
+    counts: dict[int, int] = {}
+    upper = total_seasons or 50
+    for s in range(1, upper + 1):
+        r = client.get(f"{api}/series/{slug}/season/{s}", headers=h)
+        if r.status_code != 200:
+            continue
+        try:
+            info = r.json().get("season", {})
+        except Exception:
+            continue
+        n = info.get("episodeCount")
+        if n:
+            counts[s] = int(n)
+    return counts
+
+
 def _claim(content_id: str, content_type: str, title: str = "") -> dict | None:
     client = _client()
     api = _api_base()

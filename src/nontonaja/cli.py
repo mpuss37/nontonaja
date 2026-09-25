@@ -78,6 +78,69 @@ def _fzf_menu(options: list[str], prompt: str = "Select: ") -> str | None:
     return None
 
 
+def _slider(label: str, minimum: int, maximum: int, default: int = 1) -> int | None:
+    """Pick a number with left/right arrows. Returns None if cancelled (q).
+
+    Falls back to a typed prompt when stdin is not an interactive TTY.
+    """
+    if maximum < minimum:
+        maximum = minimum
+    value = min(max(default, minimum), maximum)
+
+    if not sys.stdin.isatty():
+        while True:
+            try:
+                raw = input(f"{label} ({minimum}-{maximum}, default {value}): ").strip()
+                if raw.lower() in ("q", "quit", "exit"):
+                    return None
+                if not raw:
+                    return value
+                n = int(raw)
+                if minimum <= n <= maximum:
+                    return n
+                print(f"Harus antara {minimum}-{maximum}.")
+            except ValueError:
+                print("Input harus berupa angka.")
+            except EOFError:
+                return value
+
+    import termios
+    import tty
+
+    def render() -> None:
+        parts = []
+        for n in range(minimum, maximum + 1):
+            parts.append(f"[{n}]" if n == value else f" {n} ")
+        sys.stdout.write(f"\r  {label}: {' '.join(parts)}   ")
+        sys.stdout.flush()
+
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        render()
+        while True:
+            ch = sys.stdin.read(1)
+            if ch == "\x1b":  # escape sequence (arrow keys)
+                seq = sys.stdin.read(2)
+                if seq == "[D":  # left
+                    value = max(minimum, value - 1)
+                    render()
+                elif seq == "[C":  # right
+                    value = min(maximum, value + 1)
+                    render()
+            elif ch in ("\r", "\n"):
+                sys.stdout.write("\n")
+                sys.stdout.flush()
+                return value
+            elif ch in ("q", "Q", "\x03"):  # q or Ctrl-C
+                sys.stdout.write("\n")
+                sys.stdout.flush()
+                return None
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+
 def _pick(results):
     items = []
     for r in results:
@@ -112,18 +175,24 @@ def _pick(results):
         return None
 
 
-def _pick_action() -> str:
+def _pick_action(is_series: bool = False) -> str:
     actions = [
         "1. Stream (Play via mpv)",
         "2. Download",
         "3. Stream & Download",
         "4. Change Quality / Source",
-        "5. Exit",
     ]
+    if is_series:
+        actions.append("5. Change Season / Episode")
+        actions.append("6. Exit")
+    else:
+        actions.append("5. Exit")
     selected = _fzf_menu(actions, prompt="Select Action: ")
     if selected:
         if "Stream & Download" in selected:
             return "both"
+        elif "Change Season" in selected or "Change Episode" in selected:
+            return "change_episode"
         elif "Download" in selected and "Stream" not in selected:
             return "download"
         elif "Change Quality" in selected or "Change Source" in selected:
@@ -133,11 +202,8 @@ def _pick_action() -> str:
         return "play"
 
     print("Action:")
-    print("  1. Stream (Play via mpv)")
-    print("  2. Download")
-    print("  3. Stream & Download")
-    print("  4. Change Quality / Source")
-    print("  5. Exit")
+    for line in actions:
+        print(f"  {line}")
     while True:
         try:
             choice = input("Pilih action (default: 1): ").strip()
@@ -149,9 +215,11 @@ def _pick_action() -> str:
                 return "both"
             elif choice == "4":
                 return "change_quality"
-            elif choice == "5":
+            elif choice == "5" and is_series:
+                return "change_episode"
+            elif (choice == "6" and is_series) or (choice == "5" and not is_series):
                 return "exit"
-            print("Pilihan tidak valid. Silakan pilih 1-5.")
+            print("Pilihan tidak valid.")
         except (ValueError, EOFError):
             return "play"
 
@@ -189,33 +257,38 @@ def _pick_source():
             print("Input harus berupa angka (1, 2, atau 3).")
 
 
-def _pick_season_episode(selected) -> tuple[int, int]:
-    """Ask for season/episode when a tv series was picked. Defaults 1/1."""
-    seasons = getattr(selected, "seasons", None)
+def _episode_counts(selected) -> dict[int, int]:
+    """Best-effort {season: episode_count} for the picked series."""
+    slug = getattr(selected, "slug", "") or getattr(selected, "id", "")
+    source = getattr(selected, "source", "")
+    counts: dict[int, int] = {}
+    try:
+        if source == "idlix":
+            counts = idlix.episode_counts(slug, getattr(selected, "seasons", 0))
+        elif source == "lk21":
+            counts = lk21.episode_counts(slug)
+    except Exception:
+        counts = {}
+    return counts
+
+
+def _pick_season_episode(
+    selected, default_season: int = 1, default_episode: int = 1
+) -> tuple[int, int] | None:
+    """Slide to a season/episode with the arrow keys. Returns None if cancelled."""
+    seasons = getattr(selected, "seasons", 0) or 1
     title = getattr(selected, "title", "")
-    print(f"Series: {title}")
-    if seasons:
-        print(f"  Musim tersedia: 1-{seasons}")
-    while True:
-        try:
-            raw = input("Season (default 1): ").strip()
-            season = int(raw) if raw else 1
-            if season < 1 or (seasons and season > seasons):
-                print(f"Season harus antara 1-{seasons}." if seasons else "Season harus >= 1.")
-                continue
-            break
-        except ValueError:
-            print("Input harus berupa angka.")
-    while True:
-        try:
-            raw = input("Episode (default 1): ").strip()
-            episode = int(raw) if raw else 1
-            if episode < 1:
-                print("Episode harus >= 1.")
-                continue
-            break
-        except ValueError:
-            print("Input harus berupa angka.")
+    print(f"Series: {title}  (← → untuk geser, Enter pilih, q batal)")
+    counts = _episode_counts(selected)
+    if counts:
+        seasons = max(counts.keys())
+    season = _slider("Season", 1, seasons, default_season)
+    if season is None:
+        return None
+    max_ep = counts.get(season, 1)
+    episode = _slider("Episode", 1, max_ep, min(default_episode, max_ep))
+    if episode is None:
+        return None
     return season, episode
 
 
@@ -746,7 +819,11 @@ def run(args: argparse.Namespace) -> None:
 
     season, episode = 1, 1
     if getattr(selected, "media_type", "movie") not in ("movie", ""):
-        season, episode = _pick_season_episode(selected)
+        picked = _pick_season_episode(selected)
+        if not picked:
+            print("Keluar.")
+            return
+        season, episode = picked
 
     stream = _prepare_stream(selected, quality, source_choice, selected.title, season, episode)
     if not stream:
@@ -769,8 +846,9 @@ def run(args: argparse.Namespace) -> None:
         )
         return
 
+    is_series = getattr(selected, "media_type", "movie") not in ("movie", "")
     while True:
-        action = _pick_action()
+        action = _pick_action(is_series=is_series)
         if action == "exit":
             break
         elif action == "play":
@@ -809,8 +887,6 @@ def run(args: argparse.Namespace) -> None:
         elif action == "change_quality":
             source_choice, quality_override = _pick_source()
             quality = quality_override or config.quality
-            if getattr(selected, "media_type", "movie") not in ("movie", ""):
-                season, episode = _pick_season_episode(selected)
             new_stream = _prepare_stream(
                 selected, quality, source_choice, selected.title, season, episode
             )
@@ -820,6 +896,22 @@ def run(args: argparse.Namespace) -> None:
             else:
                 print(
                     "Stream tidak ditemukan untuk source yang dipilih. Stream sebelumnya tetap digunakan.\n"
+                )
+        elif action == "change_episode":
+            picked = _pick_season_episode(selected, season, episode)
+            if not picked:
+                print("Batal.\n")
+                continue
+            season, episode = picked
+            new_stream = _prepare_stream(
+                selected, quality, source_choice, selected.title, season, episode
+            )
+            if new_stream:
+                stream_url, subtitles, headers = new_stream
+                print(f"Season {season} Episode {episode} siap.\n")
+            else:
+                print(
+                    "Stream tidak ditemukan untuk episode itu. Episode sebelumnya tetap digunakan.\n"
                 )
 
 

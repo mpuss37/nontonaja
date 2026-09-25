@@ -178,6 +178,25 @@ def _search_browse(query: str) -> list[LK21Result]:
     return results
 
 
+def episode_counts(slug: str) -> dict[int, int]:
+    """Return {season_number: max_episode} for a drama slug by scraping its page."""
+    cfg = load_config()
+    ua = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+    m = re.match(r"^(.*)-(\d{4})$", slug)
+    base_slug = m.group(1) if m else slug
+    year = m.group(2) if m else ""
+    url = f"https://dramamu.lk21.de/{base_slug}" + (f"-{year}" if year else "")
+    r = request_with_retry("GET", url, headers={"User-Agent": ua}, proxy=cfg.proxy)
+    if not r or r.status_code != 200:
+        return {}
+    counts: dict[int, int] = {}
+    # episode links look like .../the-100-season-3-episode-16-2014
+    for s, e in re.findall(r"season-(\d+)-episode-(\d+)", r.text):
+        si, ei = int(s), int(e)
+        counts[si] = max(counts.get(si, 0), ei)
+    return counts
+
+
 def get_p2p_stream(
     slug: str,
     media_type: str = "movie",
