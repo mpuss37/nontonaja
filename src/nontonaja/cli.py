@@ -73,15 +73,22 @@ def _pick(results):
         items.append(f"{title}{label} [{mtype}]")
 
     # Try fzf first (ani-cli style)
-    selected_item = _fzf_menu(items, prompt="Select Movie: ")
-    if selected_item and selected_item in items:
-        return results[items.index(selected_item)]
+    selected_item = _fzf_menu(items + ["q. Keluar"], prompt="Select Movie: ")
+    if selected_item:
+        if selected_item == "q. Keluar":
+            return False
+        if selected_item in items:
+            return results[items.index(selected_item)]
 
     # Fallback numbered list
     for i, item in enumerate(items, 1):
         print(f"  {i}. {item}")
+    print("  q. Keluar")
     try:
-        choice = int(input("Pilih: ")) - 1
+        raw = input("Pilih (q untuk keluar): ").strip().lower()
+        if raw in ("q", "quit", "exit"):
+            return False
+        choice = int(raw) - 1
         return results[choice]
     except (ValueError, IndexError):
         return None
@@ -492,7 +499,10 @@ def _get_stream(selected, quality, source_choice) -> tuple[str, list[str], dict]
         if source == "idlix":
             try:
                 result = idlix.get_stream(
-                    selected.id, getattr(selected, "media_type", "movie"), selected.title
+                    selected.id,
+                    getattr(selected, "media_type", "movie"),
+                    selected.title,
+                    slug=getattr(selected, "slug", ""),
                 )
             except Exception as e:
                 print(f"get_stream error: {e}")
@@ -528,7 +538,10 @@ def _get_stream(selected, quality, source_choice) -> tuple[str, list[str], dict]
                 return None
             try:
                 result = idlix.get_stream(
-                    matched.id, getattr(selected, "media_type", "movie"), matched.title
+                    matched.id,
+                    matched.media_type,
+                    matched.title,
+                    slug=getattr(matched, "slug", ""),
                 )
             except Exception as e:
                 print(f"get_stream error: {e}")
@@ -659,6 +672,9 @@ def run(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     selected = _pick(results) if len(results) > 1 else results[0]
+    if selected is False:
+        print("Keluar.")
+        return
     if not selected:
         print("Invalid choice.")
         sys.exit(1)

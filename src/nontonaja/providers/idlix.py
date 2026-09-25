@@ -43,6 +43,7 @@ class SearchResult:
     image: str
     media_type: str
     source: str = "idlix"
+    slug: str = ""
 
 
 @dataclass
@@ -116,9 +117,26 @@ def search(query: str) -> list[SearchResult]:
                 year=year,
                 image=poster,
                 media_type=item.get("contentType", "movie"),
+                slug=item.get("slug", ""),
             )
         )
     return results
+
+
+def _resolve_episode(slug: str, season: int = 1, episode: int = 1) -> dict | None:
+    """For a tv_series, resolve the episode object (and its id) to play."""
+    client = _client()
+    api = _api_base()
+    h = _headers()
+    r = client.get(f"{api}/series/{slug}/season/{season}/episode/{episode}", headers=h)
+    if r.status_code != 200:
+        return None
+    try:
+        data = r.json()
+    except Exception:
+        return None
+    ep = data.get("episode")
+    return ep if ep and ep.get("id") else None
 
 
 def _claim(content_id: str, content_type: str, title: str = "") -> dict | None:
@@ -174,11 +192,29 @@ def _redeem(pentos: dict) -> StreamResult | None:
 
 
 def get_stream(
-    content_id: str, content_type: str = "movie", title: str = ""
+    content_id: str,
+    content_type: str = "movie",
+    title: str = "",
+    slug: str = "",
+    season: int = 1,
+    episode: int = 1,
 ) -> StreamResult | None:
     _load_tokens()
     api = _api_base()
     client = _client()
+
+    # TV series: play-info only accepts movies and episodes. Resolve the
+    # requested season/episode to its id first, then treat it as an episode.
+    if content_type and content_type != "movie":
+        if not slug:
+            return None
+        ep = _resolve_episode(slug, season, episode)
+        if not ep:
+            return None
+        content_id = ep["id"]
+        content_type = "episode"
+        if not title:
+            title = ep.get("name", "")
 
     cached = _renewal_tokens.get(content_id)
     if cached:
