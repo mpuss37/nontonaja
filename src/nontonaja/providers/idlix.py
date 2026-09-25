@@ -67,7 +67,7 @@ def _headers() -> dict:
 
 
 def _countdown(seconds: int, title: str = "") -> None:
-    """IDLIX forces a server-side unlock delay; show it honestly instead of hanging."""
+    """Server forces an unlock delay; show it honestly instead of hanging."""
     seconds = max(seconds, 0)
     if seconds <= 0:
         return
@@ -75,7 +75,7 @@ def _countdown(seconds: int, title: str = "") -> None:
 
     label = f" ({title})" if title else ""
     for remaining in range(seconds, 0, -1):
-        sys.stdout.write(f"\r  Membuka stream IDLIX{label}: tunggu {remaining:2d}s... ")
+        sys.stdout.write(f"\r  Menyiapkan stream{label}: tunggu {remaining:2d}s... ")
         sys.stdout.flush()
         time.sleep(1)
     sys.stdout.write("\r" + " " * 60 + "\r")
