@@ -24,6 +24,8 @@ class LK21Result:
     rating: str = ""
     genre: str = ""
     source: str = "lk21"
+    slug: str = ""
+    seasons: int = 0
 
 
 @dataclass
@@ -148,6 +150,7 @@ def search(query: str) -> list[LK21Result]:
                 year=str(item.get("year", "")),
                 image="",
                 media_type="tv" if item.get("type") == "series" else "movie",
+                slug=item["slug"],
             )
             for item in items
             if item.get("slug")
@@ -175,22 +178,40 @@ def _search_browse(query: str) -> list[LK21Result]:
     return results
 
 
-def get_p2p_stream(slug: str) -> StreamResult | None:
+def get_p2p_stream(
+    slug: str,
+    media_type: str = "movie",
+    season: int = 1,
+    episode: int = 1,
+) -> StreamResult | None:
     cfg = load_config()
     ua = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
-    resp = request_with_retry(
-        "GET",
-        f"{_base_url()}/{slug}",
-        headers={"User-Agent": ua},
-        proxy=cfg.proxy,
-    )
-    if not resp or resp.status_code != 200:
+
+    # TV series live on the drama subdomain with a season/episode slug
+    # (e.g. dramamu.lk21.de/the-100-season-1-episode-1-2014). The year suffix
+    # from the base slug moves to the end of the episode slug.
+    if media_type and media_type != "movie":
+        m = re.match(r"^(.*)-(\d{4})$", slug)
+        base_slug = m.group(1) if m else slug
+        year = f"-{m.group(2)}" if m else ""
+        ep_slug = f"{base_slug}-season-{season}-episode-{episode}{year}"
+        candidates = [f"https://dramamu.lk21.de/{ep_slug}"]
+    else:
+        candidates = [f"{_base_url()}/{slug}"]
+
+    resp = None
+    page_url = candidates[0]
+    for url in candidates:
+        r = request_with_retry("GET", url, headers={"User-Agent": ua}, proxy=cfg.proxy)
+        if r and r.status_code == 200 and "main-player" in r.text:
+            resp = r
+            page_url = url
+            break
+
+    if not resp:
         return None
 
     html = resp.text
-    if "<title>Lk21 - Nonton Film" in html and "main-player" not in html:
-        return None
-
     player_urls = re.findall(r'data-url="([^"]+)"', html)
     if not player_urls:
         return None
@@ -199,7 +220,7 @@ def get_p2p_stream(slug: str) -> StreamResult | None:
     for purl in player_urls:
         if "videonode" in purl or "p2p" in purl:
             try:
-                stream_res = _call_playcdn_api(client, purl, f"{_base_url()}/{slug}", ua)
+                stream_res = _call_playcdn_api(client, purl, page_url, ua)
                 if stream_res:
                     return stream_res
             except Exception:

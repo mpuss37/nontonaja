@@ -44,6 +44,7 @@ class SearchResult:
     media_type: str
     source: str = "idlix"
     slug: str = ""
+    seasons: int = 0
 
 
 @dataclass
@@ -118,6 +119,7 @@ def search(query: str) -> list[SearchResult]:
                 image=poster,
                 media_type=item.get("contentType", "movie"),
                 slug=item.get("slug", ""),
+                seasons=item.get("numberOfSeasons") or 0,
             )
         )
     return results

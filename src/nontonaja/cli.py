@@ -18,6 +18,24 @@ from .providers import flixhq, idlix, lk21
 from .quality import select_quality
 
 
+def _norm_title(title: str) -> str:
+    """Normalize a title for matching: drop trailing year and ' - Series' suffix."""
+    t = re.sub(r"\s*\(\d{4}\)\s*-?\s*series$", "", title, flags=re.IGNORECASE)
+    t = re.sub(r"\s*-\s*series$", "", t, flags=re.IGNORECASE)
+    t = re.sub(r"\s*\(\d{4}\)$", "", t)
+    return t.lower().strip()
+
+
+def _same_kind(a: str, b: str) -> bool:
+    """Treat tv/tv_series/series as the same media kind, movies as movies."""
+    series = {"tv", "tv_series", "series", "tvseries"}
+
+    def kind(x: str) -> str:
+        return "series" if (x or "").lower() in series else "movie"
+
+    return kind(a) == kind(b)
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="nontonaja",
@@ -169,6 +187,36 @@ def _pick_source():
             print("Pilihan tidak valid. Silakan pilih 1, 2, atau 3.")
         except ValueError:
             print("Input harus berupa angka (1, 2, atau 3).")
+
+
+def _pick_season_episode(selected) -> tuple[int, int]:
+    """Ask for season/episode when a tv series was picked. Defaults 1/1."""
+    seasons = getattr(selected, "seasons", None)
+    title = getattr(selected, "title", "")
+    print(f"Series: {title}")
+    if seasons:
+        print(f"  Musim tersedia: 1-{seasons}")
+    while True:
+        try:
+            raw = input("Season (default 1): ").strip()
+            season = int(raw) if raw else 1
+            if season < 1 or (seasons and season > seasons):
+                print(f"Season harus antara 1-{seasons}." if seasons else "Season harus >= 1.")
+                continue
+            break
+        except ValueError:
+            print("Input harus berupa angka.")
+    while True:
+        try:
+            raw = input("Episode (default 1): ").strip()
+            episode = int(raw) if raw else 1
+            if episode < 1:
+                print("Episode harus >= 1.")
+                continue
+            break
+        except ValueError:
+            print("Input harus berupa angka.")
+    return season, episode
 
 
 def _find_flixhq_match(title: str, year: str = "", media_type: str = "movie"):
@@ -451,12 +499,18 @@ def _play(
             _cleanup()
 
 
-def _get_stream(selected, quality, source_choice) -> tuple[str, list[str], dict] | None:
+def _get_stream(
+    selected, quality, source_choice, season: int = 1, episode: int = 1
+) -> tuple[str, list[str], dict] | None:
     """Get stream from chosen source."""
+    sel_type = getattr(selected, "media_type", "movie")
+    is_series = sel_type not in ("movie", "")
     if source_choice == "lk21":
         source = getattr(selected, "source", "")
         if source == "lk21":
-            result = lk21.get_p2p_stream(selected.id)
+            result = lk21.get_p2p_stream(
+                selected.id, media_type=sel_type, season=season, episode=episode
+            )
         else:
             # Cross-source: search LK21 by title
             try:
@@ -464,25 +518,27 @@ def _get_stream(selected, quality, source_choice) -> tuple[str, list[str], dict]
             except Exception:
                 results = []
             matched = None
-            title_norm = re.sub(r"\s*\(\d{4}\)$", "", selected.title).lower().strip()
+            title_norm = _norm_title(selected.title)
             title_words = set(title_norm.split())
             sel_type = getattr(selected, "media_type", "movie")
             best_score = 0
             for r in results:
-                rt = re.sub(r"\s*\(\d{4}\)$", "", r.title).lower().strip()
+                rt = _norm_title(r.title)
                 rt_words = set(rt.split())
                 score = len(title_words & rt_words) / max(len(title_words), 1)
-                if rt == title_norm and r.media_type == sel_type:
+                if rt == title_norm and _same_kind(r.media_type, sel_type):
                     matched = r
                     break
                 if rt == title_norm and not matched:
                     matched = r
-                if score > best_score and score >= 0.5 and r.media_type == sel_type:
+                if score > best_score and score >= 0.5 and _same_kind(r.media_type, sel_type):
                     best_score = score
                     matched = r
             if not matched:
                 return None
-            result = lk21.get_p2p_stream(matched.id)
+            result = lk21.get_p2p_stream(
+                matched.id, media_type=matched.media_type, season=season, episode=episode
+            )
         if result and result.url:
             try:
                 url = select_quality(result.url, quality, headers=result.headers)
@@ -490,10 +546,10 @@ def _get_stream(selected, quality, source_choice) -> tuple[str, list[str], dict]
                 url = result.url
             return (url, result.subtitles, result.headers)
 
-        fallback = _get_stream(selected, quality or 720, "flixhq")
+        fallback = _get_stream(selected, quality or 720, "flixhq", season, episode)
         if fallback:
             return fallback
-        return _get_stream(selected, quality, "idlix")
+        return _get_stream(selected, quality, "idlix", season, episode)
     elif source_choice == "idlix":
         source = getattr(selected, "source", "")
         if source == "idlix":
@@ -503,6 +559,8 @@ def _get_stream(selected, quality, source_choice) -> tuple[str, list[str], dict]
                     getattr(selected, "media_type", "movie"),
                     selected.title,
                     slug=getattr(selected, "slug", ""),
+                    season=season,
+                    episode=episode,
                 )
             except Exception as e:
                 print(f"get_stream error: {e}")
@@ -516,21 +574,21 @@ def _get_stream(selected, quality, source_choice) -> tuple[str, list[str], dict]
                 print(f"search error: {e}")
                 results = []
             matched = None
-            title_norm = clean_title.lower()
+            title_norm = _norm_title(selected.title)
             title_words = set(title_norm.split())
             sel_type = getattr(selected, "media_type", "movie")
             best_score = 0
             for r in results:
-                rt = re.sub(r"\s*\(\d{4}\)$", "", r.title).lower().strip()
+                rt = _norm_title(r.title)
                 rt_words = set(rt.split())
                 score = len(title_words & rt_words) / max(len(title_words), 1)
                 # Prefer exact title + same media_type
-                if rt == title_norm and r.media_type == sel_type:
+                if rt == title_norm and _same_kind(r.media_type, sel_type):
                     matched = r
                     break
                 if rt == title_norm and not matched:
                     matched = r
-                if score > best_score and score >= 0.5 and r.media_type == sel_type:
+                if score > best_score and score >= 0.5 and _same_kind(r.media_type, sel_type):
                     best_score = score
                     matched = r
             if not matched:
@@ -542,6 +600,8 @@ def _get_stream(selected, quality, source_choice) -> tuple[str, list[str], dict]
                     matched.media_type,
                     matched.title,
                     slug=getattr(matched, "slug", ""),
+                    season=season,
+                    episode=episode,
                 )
             except Exception as e:
                 print(f"get_stream error: {e}")
@@ -588,14 +648,16 @@ def _get_stream(selected, quality, source_choice) -> tuple[str, list[str], dict]
             return (url, subs, {})
 
         # Fallback
-        fallback = _get_stream(selected, quality, "idlix")
+        fallback = _get_stream(selected, quality, "idlix", season, episode)
         if fallback:
             return fallback
 
     return None
 
 
-def _prepare_stream(selected, quality, source_choice, title: str = ""):
+def _prepare_stream(
+    selected, quality, source_choice, title: str = "", season: int = 1, episode: int = 1
+):
     """Run _get_stream in background thread while showing progress bar."""
     bar_width = 22
     label = title or "stream"
@@ -603,7 +665,7 @@ def _prepare_stream(selected, quality, source_choice, title: str = ""):
     done = threading.Event()
 
     def _fetch():
-        result_holder[0] = _get_stream(selected, quality, source_choice)
+        result_holder[0] = _get_stream(selected, quality, source_choice, season, episode)
         done.set()
 
     t = threading.Thread(target=_fetch, daemon=True)
@@ -682,7 +744,11 @@ def run(args: argparse.Namespace) -> None:
     source_choice, quality_override = _pick_source()
     quality = quality_override or config.quality
 
-    stream = _prepare_stream(selected, quality, source_choice, selected.title)
+    season, episode = 1, 1
+    if getattr(selected, "media_type", "movie") not in ("movie", ""):
+        season, episode = _pick_season_episode(selected)
+
+    stream = _prepare_stream(selected, quality, source_choice, selected.title, season, episode)
     if not stream:
         print("No stream found.")
         sys.exit(1)
@@ -743,7 +809,11 @@ def run(args: argparse.Namespace) -> None:
         elif action == "change_quality":
             source_choice, quality_override = _pick_source()
             quality = quality_override or config.quality
-            new_stream = _prepare_stream(selected, quality, source_choice, selected.title)
+            if getattr(selected, "media_type", "movie") not in ("movie", ""):
+                season, episode = _pick_season_episode(selected)
+            new_stream = _prepare_stream(
+                selected, quality, source_choice, selected.title, season, episode
+            )
             if new_stream:
                 stream_url, subtitles, headers = new_stream
                 print("Quality / source berhasil diubah.\n")
