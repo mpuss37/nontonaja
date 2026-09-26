@@ -44,13 +44,11 @@ pkg install python mpv ffmpeg fzf python-pip
 pip install --break-system-packages .
 termux-setup-storage
 ```
-> Video opens in a new Termux window as ASCII color blocks (`--vo=tct`), and
-> the window closes automatically when mpv quits. The RUN_COMMAND intent needs
-> Termux settings → "Allow external apps to execute commands" (also written
-> automatically to `~/.termux/termux.properties` on first run — restart Termux
-> if the window doesn't appear). If the new window can't be opened, playback
-> falls back to the current terminal with `--vo=tct`. Override with
-> `NONTONAJA_MPV_VO` (e.g. `tty` for plain ASCII).
+> Video plays in the current terminal as ASCII color blocks (`--vo=tct`);
+> quit with mpv's `q`, then the menu returns. The stock Termux `mpv.conf`
+> ships `vid=no` (video decode disabled → audio-only playback); nontonaja
+> always passes `--vid=auto` on the command line to override it. Override the
+> renderer with `NONTONAJA_MPV_VO` (e.g. `kitty` on supported terminals).
 > Note: the Play Store Termux build is unmaintained; use the F-Droid version.
 
 ## Install

@@ -4,13 +4,11 @@ import argparse
 import difflib
 import os
 import re
-import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
 import threading
-import time
 
 import httpx
 
@@ -481,97 +479,6 @@ def _is_termux() -> bool:
     return os.environ.get("PREFIX", "").startswith("/data/data/com.termux")
 
 
-def _ensure_allow_external_app() -> None:
-    """Best-effort: enable allow-external-apps so RUN_COMMAND intents are accepted."""
-    try:
-        path = os.path.expanduser("~/.termux/termux.properties")
-        content = ""
-        if os.path.exists(path):
-            with open(path) as f:
-                content = f.read()
-        if re.search(r"^allow-external-apps\s*=\s*true", content, flags=re.MULTILINE):
-            return
-        with open(path, "a") as f:
-            if content and not content.endswith("\n"):
-                f.write("\n")
-            f.write("allow-external-apps=true\n")
-    except OSError:
-        pass
-
-
-def _find_am() -> str | None:
-    """Locate the Android activity manager (am)."""
-    for cand in ("am", "/system/bin/am", "/vendor/bin/am"):
-        path = shutil.which(cand) if not cand.startswith("/") else (cand if os.path.exists(cand) else None)
-        if path:
-            return path
-    return None
-
-
-def _launch_termux(cmd: list[str], workdir: str) -> tuple[bool, str]:
-    """Open mpv in a new Termux window via the RUN_COMMAND intent.
-
-    Writes a script into workdir so args with spaces/& survive the intent
-    serialization. The script marks 'started' before running mpv and writes the
-    exit code to 'done' after, so the caller can verify the session actually
-    began (am can return 0 while the intent is silently rejected). Returns
-    (ok, error_detail).
-    """
-    am = _find_am()
-    if not am:
-        return False, "perintah 'am' tidak ditemukan"
-
-    _ensure_allow_external_app()
-
-    script_path = os.path.join(workdir, "run.sh")
-    started_file = os.path.join(workdir, "started")
-    done_file = os.path.join(workdir, "done")
-    script = "\n".join(
-        [
-            "#!/data/data/com.termux/files/usr/bin/bash",
-            "export TERM=xterm-256color COLORTERM=truecolor",
-            "export PATH=/data/data/com.termux/files/usr/bin:/system/bin:/system/xbin",
-            "unset PREFIX",  # avoid re-triggering our own _is_termux inside child
-            f"touch {shlex.quote(started_file)}",
-            shlex.join(cmd),
-            f"echo $? > {shlex.quote(done_file)}",
-        ]
-    )
-    with open(script_path, "w") as f:
-        f.write(script + "\n")
-    os.chmod(script_path, 0o755)
-
-    args = [
-        am, "start", "--user", "0", "-a", "com.termux.RUN_COMMAND",
-        "-n", "com.termux/.app.TermuxActivity",
-        "--es", "com.termux.RUN_COMMAND_PATH", os.environ.get("PREFIX", "/data/data/com.termux/files/usr") + "/bin/bash",
-        "--esa", "com.termux.RUN_COMMAND_ARGUMENTS", script_path,
-    ]
-    workdir_env = os.environ.get("HOME", "")
-    if workdir_env:
-        args += ["--es", "com.termux.RUN_COMMAND_WORKDIR", workdir_env]
-    try:
-        res = subprocess.run(args, capture_output=True, text=True, timeout=10)
-    except Exception as e:
-        return False, str(e)
-    if res.returncode != 0:
-        detail = f"{res.stdout or ''} {res.stderr or ''}".strip()[:300]
-        return False, f"exit {res.returncode}: {detail}"
-    return True, ""
-
-
-def _cleanup_after_mpv(proxy_server, sub_dir: str, done_file: str) -> None:
-    """Watch for mpv completion in the separate window, then shut the proxy down."""
-    def _watch():
-        while not os.path.exists(done_file):
-            time.sleep(1)
-        if proxy_server:
-            proxy_server.shutdown()
-        shutil.rmtree(sub_dir, ignore_errors=True)
-
-    threading.Thread(target=_watch, daemon=True).start()
-
-
 def _play(
     stream_url: str,
     title: str,
@@ -647,6 +554,10 @@ def _play(
         vo = "tct"
     if vo:
         mpv_cmd += [f"--vo={vo}"]
+    if _is_termux():
+        # Termux's stock mpv.conf ships vid=no (video decode disabled), so
+        # playback would be audio-only regardless of --vo=tct. Cmdline wins.
+        mpv_cmd += ["--vid=auto"]
     for sub in local_subs:
         mpv_cmd += ["--sub-file=" + sub]
     if headers:
@@ -656,34 +567,9 @@ def _play(
             mpv_cmd += [f"--user-agent={headers['User-Agent']}"]
 
     if _is_termux():
-        started_file = os.path.join(sub_dir, "started")
-        done_file = os.path.join(sub_dir, "done")
-        ok, err = _launch_termux(mpv_cmd, sub_dir)
-        started = False
-        if ok:
-            # am can succeed while Termux silently rejects the intent
-            # (Allow external apps disabled). Wait briefly for the marker.
-            for _ in range(30):
-                if os.path.exists(started_file):
-                    started = True
-                    break
-                time.sleep(0.1)
-        if started:
-            _cleanup_after_mpv(proxy_server, sub_dir, done_file)
-            print(
-                "Pemutaran dibuka di window Termux baru (ASCII rendering). "
-                "Quit mpv (q) untuk menutup window.\n"
-            )
-            return
-        if ok:
-            print("Intent diterima am tapi session tidak terbuka.")
-        else:
-            print(f"RUN_COMMAND gagal: {err}")
-        print(
-            "Aktifkan Termux → Settings → Allow external apps, "
-            "lalu coba lagi. Fallback: putar di terminal ini (--vo=tct).\n"
-        )
-        # Foreground: tct renders to THIS terminal; DEVNULL would hide the video.
+        # Foreground so the tct renderer owns this terminal. Video shows as
+        # ASCII color blocks; quit with mpv's 'q' (or Ctrl+C), then the
+        # proxy shuts down and temp files are removed.
         try:
             subprocess.run(mpv_cmd)
         finally:
