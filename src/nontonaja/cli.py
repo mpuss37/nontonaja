@@ -479,6 +479,31 @@ def _is_termux() -> bool:
     return os.environ.get("PREFIX", "").startswith("/data/data/com.termux")
 
 
+_mpv_opts_cache: set[str] | None = None
+
+
+def _mpv_option_names() -> set[str]:
+    """Option names supported by the installed mpv (cached, empty on failure)."""
+    global _mpv_opts_cache
+    if _mpv_opts_cache is None:
+        try:
+            out = subprocess.run(
+                ["mpv", "--list-options"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            ).stdout
+        except (OSError, subprocess.SubprocessError):
+            out = ""
+        _mpv_opts_cache = {
+            line.strip().split()[0].lstrip("-")
+            for line in out.splitlines()
+            if line.strip().startswith("--")
+        }
+    return _mpv_opts_cache
+
+
 def _play(
     stream_url: str,
     title: str,
@@ -543,7 +568,7 @@ def _play(
         local_stream,
         f"--force-media-title={title}",
         "--no-ytdl",
-        "--msg-level=vo=v",
+        "--msg-level=all=warn",
         "--cache=yes",
         "--demuxer-max-bytes=50M",
         "--demuxer-readahead-secs=30",
@@ -558,6 +583,20 @@ def _play(
         # Termux's stock mpv.conf ships vid=no (video decode disabled), so
         # playback would be audio-only regardless of --vo=tct. Cmdline wins.
         mpv_cmd += ["--vid=auto"]
+        # The Lua OSC redraws text over the ASCII frame (visible flicker),
+        # and tct's default per-line buffering tears between frames.
+        mpv_cmd += ["--osc=no"]
+        if "vo-tct-buffering" in _mpv_option_names():
+            mpv_cmd += ["--vo-tct-buffering=frame"]
+        input_conf = os.path.join(sub_dir, "input.conf")
+        with open(input_conf, "w") as f:
+            f.write(
+                "UP add volume 10\n"
+                "DOWN add volume -10\n"
+                "LEFT seek -10\n"
+                "RIGHT seek 10\n"
+            )
+        mpv_cmd += ["--input-conf=" + input_conf]
     for sub in local_subs:
         mpv_cmd += ["--sub-file=" + sub]
     if headers:
@@ -570,6 +609,12 @@ def _play(
         # Foreground so the tct renderer owns this terminal. Video shows as
         # ASCII color blocks; quit with mpv's 'q' (or Ctrl+C), then the
         # proxy shuts down and temp files are removed.
+        print("Kontrol: SPACE pause · ←/→ seek 10s · ↑/↓ volume · q keluar")
+        print(
+            "Tips video tajam: Termux → menu samping → Fullscreen, "
+            "pakai lanskap, kecilkan font (Settings → Font size). "
+            "Buka keyboard: volume bawah + B.\n"
+        )
         try:
             subprocess.run(mpv_cmd)
         finally:

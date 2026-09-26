@@ -45,10 +45,13 @@ pip install --break-system-packages .
 termux-setup-storage
 ```
 > Video plays in the current terminal as ASCII color blocks (`--vo=tct`);
-> quit with mpv's `q`, then the menu returns. The stock Termux `mpv.conf`
-> ships `vid=no` (video decode disabled → audio-only playback); nontonaja
-> always passes `--vid=auto` on the command line to override it. Override the
-> renderer with `NONTONAJA_MPV_VO` (e.g. `kitty` on supported terminals).
+> quit with mpv's `q`, then the menu returns. Keys: `SPACE` pause, `←`/`→`
+> seek 10s, `↑`/`↓` volume. The stock Termux `mpv.conf` ships `vid=no`
+> (video decode disabled → audio-only playback); nontonaja always passes
+> `--vid=auto` on the command line to override it. For a sharper picture use
+> Termux fullscreen + landscape + a smaller font — terminal cells are the
+> resolution limit, not the stream. Override the renderer with
+> `NONTONAJA_MPV_VO` (e.g. `kitty` on supported terminals).
 > Note: the Play Store Termux build is unmaintained; use the F-Droid version.
 
 ## Install
