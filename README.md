@@ -33,6 +33,20 @@ sudo dnf install mpv ffmpeg fzf python3 python3-pip
 brew install mpv ffmpeg fzf python
 ```
 
+**Android Termux**
+```bash
+bash setup-termux.sh          # installs everything + sets up storage
+```
+or manually:
+```bash
+pkg update && pkg upgrade
+pkg install python mpv ffmpeg fzf python-pip
+pip install --break-system-packages .
+termux-setup-storage
+```
+> Video renders inside an mpv window. On weak phones force terminal rendering by
+> creating `~/.config/mpv/mpv.conf` with `vo=tct` (or `--vo=tty` for basic output).
+
 ## Install
 
 Pick one:
@@ -51,6 +65,9 @@ nontonaja "spider man"
 pip install --user pipx
 pipx install .
 nontonaja "spider man"
+
+# 4. Termux (Android)
+bash setup-termux.sh
 ```
 
 ## Usage
