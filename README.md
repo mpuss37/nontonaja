@@ -44,8 +44,13 @@ pkg install python mpv ffmpeg fzf python-pip
 pip install --break-system-packages .
 termux-setup-storage
 ```
-> Video plays in the current terminal as ASCII color blocks (`--vo=tct`);
-> quit with mpv's `q`, then the menu returns. Keys: `SPACE` pause, `←`/`→`
+> **External player:** if an Android video player (VLC, MX Player,
+> mpv-android, ...) is installed, the film opens there automatically at full
+> resolution — subtitles are only available in terminal mode. Force terminal
+> playback with `NONTONAJA_NO_EXTERNAL_PLAYER=1`.
+>
+> **Terminal playback** renders ASCII color blocks (`--vo=tct`); quit with
+> mpv's `q`, then the menu returns. Keys: `SPACE` pause, `←`/`→`
 > seek 10s, `↑`/`↓` volume. The stock Termux `mpv.conf` ships `vid=no`
 > (video decode disabled → audio-only playback); nontonaja always passes
 > `--vid=auto` on the command line to override it. For a sharper picture use

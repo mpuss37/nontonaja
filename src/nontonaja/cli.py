@@ -504,6 +504,43 @@ def _mpv_option_names() -> set[str]:
     return _mpv_opts_cache
 
 
+_VIEW_MIMES = (
+    "application/vnd.apple.mpegurl",
+    "application/x-mpegURL",
+    "audio/mpegurl",
+    "video/mp4",
+)
+
+
+def _launch_android_player(url: str) -> tuple[bool, str]:
+    """Open an external Android video player (VLC, MX Player, ...) for a URL.
+
+    Only MIME-typed VIEW intents are tried so browsers never match. True
+    means some activity accepted the intent (the system chooser may still
+    ask which app to use); returns (opened, detail).
+    """
+    am = None
+    for cand in ("am", "/system/bin/am", "/vendor/bin/am"):
+        am = shutil.which(cand) if not cand.startswith("/") else (cand if os.path.exists(cand) else None)
+        if am:
+            break
+    if not am:
+        return False, "perintah 'am' tidak ditemukan"
+
+    last = "tidak ada app yang bisa membuka stream video"
+    for mime in _VIEW_MIMES:
+        args = [am, "start", "-a", "android.intent.action.VIEW", "-d", url, "-t", mime]
+        try:
+            res = subprocess.run(args, capture_output=True, text=True, timeout=10, check=False)
+        except (OSError, subprocess.SubprocessError) as e:
+            return False, str(e)
+        out = f"{res.stdout} {res.stderr}".strip()
+        if res.returncode == 0 and "Error" not in out:
+            return True, ""
+        last = out[:200] or f"exit {res.returncode}"
+    return False, last
+
+
 def _play(
     stream_url: str,
     title: str,
@@ -606,6 +643,32 @@ def _play(
             mpv_cmd += [f"--user-agent={headers['User-Agent']}"]
 
     if _is_termux():
+        # Prefer a real Android video player (full resolution, hardware
+        # decode) when one is installed; the proxy URL is localhost so any
+        # player can read it. Falls back to ASCII playback below.
+        if (
+            os.environ.get("NONTONAJA_NO_EXTERNAL_PLAYER") != "1"
+            and local_stream.startswith("http://127.0.0.1")
+        ):
+            opened, why = _launch_android_player(local_stream)
+            if opened:
+                print("Film dibuka di player Android (resolusi penuh).")
+                print(
+                    "Catatan: subtitle tidak ikut di player Android. "
+                    "Untuk subtitle, pakai mode terminal: NONTONAJA_NO_EXTERNAL_PLAYER=1"
+                )
+                try:
+                    input(
+                        "\nPlayer tidak muncul/jalan? Kembali ke sini lalu tekan Enter. "
+                        "Selesai nonton? Enter untuk kembali ke menu... "
+                    )
+                except (EOFError, KeyboardInterrupt):
+                    pass
+                finally:
+                    _cleanup()
+                return
+            print(f"Player Android tidak bisa dibuka ({why})")
+            print("Fallback: putar di terminal ini.\n")
         # Foreground so the tct renderer owns this terminal. Video shows as
         # ASCII color blocks; quit with mpv's 'q' (or Ctrl+C), then the
         # proxy shuts down and temp files are removed.
