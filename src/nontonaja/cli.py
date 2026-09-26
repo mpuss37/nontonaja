@@ -4,6 +4,7 @@ import argparse
 import difflib
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -475,6 +476,58 @@ def _search(query: str) -> tuple[list, list[str]]:
     return merged, errors
 
 
+def _is_termux() -> bool:
+    """True when running under the Termux Android terminal."""
+    return os.environ.get("PREFIX", "").startswith("/data/data/com.termux")
+
+
+def _launch_termux(cmd: list[str], workdir: str) -> bool:
+    """Open mpv in a new Termux window via the RUN_COMMAND intent.
+
+    Writes a temp script so args with spaces/& survive the intent serialization,
+    then starts a new TerminalActivity bash session. The window auto-closes when
+    the script exits (mpv quits). Returns False if the intent could not be fired.
+    """
+    script_path = os.path.join(workdir, "run.sh")
+    script = "\n".join(
+        [
+            "#!/data/data/com.termux/files/usr/bin/bash",
+            "export TERM=xterm-256color COLORTERM=truecolor",
+            "unset PREFIX",  # avoid re-triggering our own _is_termux inside child
+            shlex.join(cmd),
+            f"touch {shlex.quote(os.path.join(workdir, 'done'))}",
+        ]
+    )
+    with open(script_path, "w") as f:
+        f.write(script + "\n")
+    os.chmod(script_path, 0o755)
+
+    args = (
+        "am", "start", "--user", "0", "-a", "com.termux.RUN_COMMAND",
+        "-n", "com.termux/.app.TermuxActivity",
+        "--es", "com.termux.RUN_COMMAND_PATH", os.environ.get("PREFIX", "/data/data/com.termux/files/usr") + "/bin/bash",
+        "--esa", "com.termux.RUN_COMMAND_ARGUMENTS", script_path,
+        "--es", "com.termux.RUN_COMMAND_WORKDIR", os.environ.get("HOME", ""),
+    )
+    try:
+        res = subprocess.run(args, capture_output=True, text=True, timeout=10)
+        return res.returncode == 0
+    except Exception:
+        return False
+
+
+def _cleanup_after_mpv(proxy_server, sub_dir: str, done_file: str) -> None:
+    """Watch for mpv completion in the separate window, then shut the proxy down."""
+    def _watch():
+        while not os.path.exists(done_file):
+            time.sleep(1)
+        if proxy_server:
+            proxy_server.shutdown()
+        shutil.rmtree(sub_dir, ignore_errors=True)
+
+    threading.Thread(target=_watch, daemon=True).start()
+
+
 def _play(
     stream_url: str,
     title: str,
@@ -545,6 +598,11 @@ def _play(
         "--demuxer-readahead-secs=30",
         "--slang=id,ind,indonesian,en,eng",
     ]
+    vo = os.environ.get("NONTONAJA_MPV_VO")
+    if not vo and _is_termux():
+        vo = "tct"
+    if vo:
+        mpv_cmd += [f"--vo={vo}"]
     for sub in local_subs:
         mpv_cmd += ["--sub-file=" + sub]
     if headers:
@@ -552,6 +610,18 @@ def _play(
             mpv_cmd += [f"--http-header-fields={k}: {v}"]
         if "User-Agent" in headers:
             mpv_cmd += [f"--user-agent={headers['User-Agent']}"]
+
+    if _is_termux():
+        done_file = os.path.join(sub_dir, "done")
+        ok = _launch_termux(mpv_cmd, sub_dir)
+        if ok:
+            _cleanup_after_mpv(proxy_server, sub_dir, done_file)
+            print(
+                "Pemutaran dibuka di window Termux baru (ASCII rendering). "
+                "Quit mpv (q) untuk menutup window.\n"
+            )
+            return
+        print("Termux RUN_COMMAND gagal; fallback ke inline play.\n")
 
     if detach:
         import threading

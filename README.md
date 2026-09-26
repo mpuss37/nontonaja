@@ -44,8 +44,11 @@ pkg install python mpv ffmpeg fzf python-pip
 pip install --break-system-packages .
 termux-setup-storage
 ```
-> Video renders inside an mpv window. On weak phones force terminal rendering by
-> creating `~/.config/mpv/mpv.conf` with `vo=tct` (or `--vo=tty` for basic output).
+> Video renders automatically in a new Termux window as ASCII color blocks.
+> Requires Run command shortcuts support: Termux settings → "Allow external
+> apps to execute commands". Falls back to inline `--vo=tct` if the intent is
+> blocked. Override with `NONTONAJA_MPV_VO` (e.g. `tty` for plain ASCII).
+> Note: the Play Store Termux build is unmaintained; use the F-Droid version.
 
 ## Install
 
