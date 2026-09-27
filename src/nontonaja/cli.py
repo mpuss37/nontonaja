@@ -607,9 +607,13 @@ def _play(
         "--no-ytdl",
         "--msg-level=all=warn",
         "--cache=yes",
-        "--demuxer-max-bytes=100M",
-        "--demuxer-readahead-secs=15",
+        "--cache-secs=60",
+        "--demuxer-max-bytes=200M", 
+        "--demuxer-readahead-secs=10",
         "--demuxer-seekable-cache=yes",
+        "--demuxer-thread=yes",
+        "--stream-buffer-size=4096",
+        "--network-timeout=30",
         "--slang=id,ind,indonesian,en,eng",
     ]
     vo = os.environ.get("NONTONAJA_MPV_VO")
