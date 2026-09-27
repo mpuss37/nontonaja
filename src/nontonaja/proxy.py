@@ -20,8 +20,10 @@ _PORT = 0  # auto-assign
 
 
 class _Handler(BaseHTTPRequestHandler):
-    # HTTP/1.1 so players can use keep-alive / range properly
-    protocol_version = "HTTP/1.1"
+    # HTTP/1.0 + Connection: close — avoids keep-alive hangs where the player
+    # holds a socket open and the handler blocks waiting. Each request is a
+    # fresh connection, which is what flaky Android players handle best.
+    protocol_version = "HTTP/1.0"
 
     def do_HEAD(self):
         # Many players probe with HEAD before GET
@@ -104,41 +106,53 @@ class _Handler(BaseHTTPRequestHandler):
                 pass
             return
         try:
-            r = self.server.httpx_client.get(url, timeout=30)
+            # Stream the segment straight through so the player gets bytes as
+            # they arrive (avoids buffering the full segment = long stall).
+            req = self.server.httpx_client.build_request("GET", url, timeout=30)
+            r = self.server.httpx_client.send(req, stream=True)
             if debug:
                 print(
-                    f"[proxy] seg idx={idx} upstream={r.status_code} len={len(r.content)}",
+                    f"[proxy] seg idx={idx} upstream={r.status_code} "
+                    f"ct={r.headers.get('content-type')} cl={r.headers.get('content-length')}",
                     flush=True,
                 )
-            # More aggressive refresh on any error
-            if r.status_code >= 400 and hasattr(self.server, '_refresh_playlist'):
+            # Refresh + retry once on 4xx
+            if r.status_code >= 400 and hasattr(self.server, "_refresh_playlist"):
+                r.close()
                 self.server._refresh_playlist()
-                # Retry with new URL
                 if idx is not None:
-                    url = self.server.seg_map.get(idx)
-                    if url:
-                        r = self.server.httpx_client.get(url, timeout=30)
+                    new_url = self.server.seg_map.get(idx)
+                    if new_url:
+                        req = self.server.httpx_client.build_request("GET", new_url, timeout=30)
+                        r = self.server.httpx_client.send(req, stream=True)
                         if debug:
                             print(
-                                f"[proxy] seg idx={idx} retry={r.status_code} len={len(r.content)}",
+                                f"[proxy] seg idx={idx} retry={r.status_code}",
                                 flush=True,
                             )
-            
-            self.send_response(r.status_code)
+
             ct = r.headers.get("content-type", "video/mp4")
             if "video" not in ct:
                 ct = "video/mp4"
+            # Prefer upstream Content-Length when present so the player can
+            # track progress; fall back to chunked (no length) otherwise.
+            cl = r.headers.get("content-length")
+            self.send_response(r.status_code)
             self.send_header("Content-Type", ct)
-            # Add no-cache headers for segments too
             self.send_header("Cache-Control", "no-cache")
-            self.send_header("Content-Length", str(len(r.content)))
+            self.send_header("Accept-Ranges", "none")
+            if cl:
+                self.send_header("Content-Length", cl)
             self.end_headers()
-            self.wfile.write(r.content)
+            for chunk in r.iter_bytes(chunk_size=64 * 1024):
+                self.wfile.write(chunk)
+            r.close()
         except Exception as e:
             if debug:
                 print(f"[proxy] seg idx={idx} EXC {type(e).__name__}: {e}", flush=True)
             try:
-                self.send_error(502)
+                if not self.wfile.closed:
+                    self.send_error(502)
             except Exception:
                 pass
 
@@ -202,9 +216,13 @@ class ProxyServer(ThreadingHTTPServer):
         cfg = load_config()
         self.httpx_client = httpx.Client(
             verify=False, follow_redirects=True, timeout=30,
-            limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+            limits=httpx.Limits(max_connections=32, max_keepalive_connections=16),
             **({"proxy": cfg.proxy} if cfg.proxy else {}),
         )
+        # ThreadingHTTPServer defaults to a small request queue; raise it and
+        # enable daemon threads so stalled connections don't block the pool.
+        self.daemon_threads = True
+        self.request_queue_size = 32
 
     def _fetch_sub_text(self) -> str | None:
         """Fetch the current sub-playlist text (resolving master if needed)."""
