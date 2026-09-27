@@ -696,7 +696,8 @@ def _play(
         def _run_bg():
             try:
                 print(f"Debug MPV detached: {' '.join(mpv_cmd)}")
-                subprocess.run(mpv_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                # Temporarily show MPV output for debugging
+                subprocess.run(mpv_cmd)
             finally:
                 _cleanup()
 
