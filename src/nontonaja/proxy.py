@@ -39,6 +39,10 @@ class _Handler(BaseHTTPRequestHandler):
         data = self.server.playlist_data.encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/vnd.apple.mpegurl")
+        # Force no cache for Android players  
+        self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+        self.send_header("Pragma", "no-cache") 
+        self.send_header("Expires", "0")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
@@ -52,10 +56,10 @@ class _Handler(BaseHTTPRequestHandler):
             return
         try:
             r = self.server.httpx_client.get(url, timeout=30)
-            # If segment expired, try refresh playlist once
-            if r.status_code in (404, 403, 410) and hasattr(self.server, '_refresh_playlist'):
+            # More aggressive refresh on any error
+            if r.status_code >= 400 and hasattr(self.server, '_refresh_playlist'):
                 self.server._refresh_playlist()
-                # Retry with potentially new URL
+                # Retry with new URL
                 url = self.server.seg_map.get(idx)
                 if url:
                     r = self.server.httpx_client.get(url, timeout=30)
@@ -65,6 +69,8 @@ class _Handler(BaseHTTPRequestHandler):
             if "video" not in ct:
                 ct = "video/mp4"
             self.send_header("Content-Type", ct)
+            # Add no-cache headers for segments too
+            self.send_header("Cache-Control", "no-cache")
             self.send_header("Content-Length", str(len(r.content)))
             self.end_headers()
             self.wfile.write(r.content)
@@ -112,6 +118,7 @@ class ProxyServer(ThreadingHTTPServer):
         self.seg_map = seg_map
         self._original_url = None  # Store for refresh
         self._preferred_quality = None
+        self._last_refresh = 0  # Timestamp
         cfg = load_config()
         self.httpx_client = httpx.Client(
             verify=False, follow_redirects=True, timeout=30,
@@ -121,9 +128,16 @@ class ProxyServer(ThreadingHTTPServer):
 
     def _refresh_playlist(self):
         """Refresh expired playlist URLs"""
+        import time
+        now = time.time()
+        # Throttle refresh to max once per 30 seconds
+        if now - self._last_refresh < 30:
+            return
+        
         if not self._original_url:
             return
         try:
+            self._last_refresh = now
             resp = self.httpx_client.get(self._original_url)
             playlist_text = resp.text
             
