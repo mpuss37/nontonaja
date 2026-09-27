@@ -173,6 +173,15 @@ Keys:
 
 Proxy also set via `NONTONAJA_PROXY` or `ALL_PROXY` env vars.
 
+### Environment variables
+
+| Variable | Description |
+|----------|-------------|
+| `NONTONAJA_NO_EXTERNAL_PLAYER` | Set to `1` to force terminal (ASCII) playback instead of an external player |
+| `NONTONAJA_MPV_VO` | Override the mpv video output (e.g. `kitty`, `tct`) |
+| `NONTONAJA_PROXY` / `ALL_PROXY` | SOCKS/HTTP proxy |
+| `NONTONAJA_DEBUG_PROXY` | Set to `1` to print HLS proxy logs (playlist refresh, segment fetches) for troubleshooting |
+
 ## Features
 
 - **Parallel search** across 3 providers with deduplication
