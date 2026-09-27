@@ -44,10 +44,20 @@ pkg install python mpv ffmpeg fzf python-pip
 pip install --break-system-packages .
 termux-setup-storage
 ```
-> **External player:** if an Android video player (VLC, MX Player,
-> mpv-android, ...) is installed, the film opens there automatically at full
-> resolution — subtitles are only available in terminal mode. Force terminal
-> playback with `NONTONAJA_NO_EXTERNAL_PLAYER=1`.
+> **External player (Android):** if a video player is installed, the film
+> opens there automatically at full resolution — subtitles are only available
+> in terminal mode. Force terminal playback with
+> `NONTONAJA_NO_EXTERNAL_PLAYER=1`.
+>
+> ⚠️ **Use `mpv-android` — other players (VLC, MX Player, Visha, ...) may
+> stall mid-playback** because the obfuscated HLS segments from these CDNs are
+> not handled well by them. `mpv-android` plays them smoothly.
+>
+> - **Google Play:** https://play.google.com/store/apps/details?id=is.xyz.mpv
+> - **F-Droid:** https://f-droid.org/packages/is.xyz.mpv/
+>
+> Install one of the above and set it as the default handler, or open the
+> stream URL manually in `mpv-android`.
 >
 > **Terminal playback** renders ASCII color blocks (`--vo=tct`); quit with
 > mpv's `q`, then the menu returns. Keys: `SPACE` pause, `←`/`→`
@@ -138,6 +148,8 @@ Notes:
 - Sources auto-fallback: if title unavailable on chosen source, tries others.
 - IDLIX enforces 15s server unlock wait before playback; countdown shown. Unlock token cached for instant replay.
 - Local HTTP proxy rewrites HLS segments (obfuscated `.pict` extensions) for `mpv`/`ffmpeg` compatibility.
+- **On Android, use `mpv-android` as the external player** (see the Termux note
+  above). Other players can stall mid-playback on these obfuscated segments.
 
 ## Configuration
 
@@ -168,6 +180,7 @@ Proxy also set via `NONTONAJA_PROXY` or `ALL_PROXY` env vars.
 - **Token caching** for IDLIX auth (skip 15s unlock on replay)
 - **Auto-fallback** between sources when content unavailable
 - **Local HLS proxy** for obfuscated segment compatibility
+- **mpv-android friendly** — recommended player for smooth Android playback
 - **Subtitle integration** with downloads via ffmpeg
 - **Quality selection** with provider-specific options
 
