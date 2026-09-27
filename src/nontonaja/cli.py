@@ -611,7 +611,7 @@ def _play(
         "--demuxer-max-bytes=75M",
         "--demuxer-readahead-secs=5", 
         "--demuxer-seekable-cache=no",
-        "--stream-buffer-size=1024",
+        "--stream-buffer-size=4096",
         "--slang=id,ind,indonesian,en,eng",
     ]
     vo = os.environ.get("NONTONAJA_MPV_VO")
