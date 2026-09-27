@@ -982,7 +982,7 @@ def run(args: argparse.Namespace) -> None:
         config.subs_language,
         headers=headers,
     )
-        return
+    return
 
     is_series = getattr(selected, "media_type", "movie") not in ("movie", "")
     while True:
