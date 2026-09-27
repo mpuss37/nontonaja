@@ -1,117 +1,75 @@
 # nontonaja
 
-Terminal CLI to search, stream, and download movies & TV series with `mpv` + `ffmpeg`.
+Search, stream, and download movies & TV series from your terminal using
+`mpv` + `ffmpeg`.
 
-## Dependencies
+## Requirements
 
 Install these first:
 
-- **Python** ≥ 3.10
-- **mpv** – video player
-- **ffmpeg** – download & mux video + subtitles
-- **fzf** – interactive picker menus (optional; falls back to numbered prompt)
-
-### OS packages
-
-**Arch / Artix**
-```bash
-sudo pacman -S mpv ffmpeg fzf python python-pip
-```
-
-**Debian / Ubuntu**
-```bash
-sudo apt install mpv ffmpeg fzf python3 python3-pip python3-venv
-```
-
-**Fedora**
-```bash
-sudo dnf install mpv ffmpeg fzf python3 python3-pip
-```
-
-**macOS (Homebrew)**
-```bash
-brew install mpv ffmpeg fzf python
-```
-
-**Android Termux**
-```bash
-bash setup-termux.sh          # installs everything + sets up storage
-```
-or manually:
-```bash
-pkg update && pkg upgrade
-pkg install python mpv ffmpeg fzf python-pip
-pip install --break-system-packages .
-termux-setup-storage
-```
-> **External player (Android):** if a video player is installed, the film
-> opens there automatically at full resolution — subtitles are only available
-> in terminal mode. Force terminal playback with
-> `NONTONAJA_NO_EXTERNAL_PLAYER=1`.
->
-> **Use `mpv-android` — other players (VLC, MX Player, Visha, ...) may
-> stall mid-playback** because the segment streams from these providers are
-> not handled well by them. `mpv-android` plays them smoothly.
->
-> - **Google Play:** https://play.google.com/store/apps/details?id=is.xyz.mpv
-> - **F-Droid:** https://f-droid.org/packages/is.xyz.mpv/
->
-> Install one of the above and set it as the default handler, or open the
-> stream URL manually in `mpv-android`.
->
-> **Terminal playback** renders ASCII color blocks (`--vo=tct`); quit with
-> mpv's `q`, then the menu returns. Keys: `SPACE` pause, `←`/`→`
-> seek 10s, `↑`/`↓` volume. The stock Termux `mpv.conf` ships `vid=no`
-> (video decode disabled → audio-only playback); nontonaja always passes
-> `--vid=auto` on the command line to override it. For a sharper picture use
-> Termux fullscreen + landscape + a smaller font — terminal cells are the
-> resolution limit, not the stream. Override the renderer with
-> `NONTONAJA_MPV_VO` (e.g. `kitty` on supported terminals).
-> Note: the Play Store Termux build is unmaintained; use the F-Droid version.
+| Tool | Why |
+|------|-----|
+| **Python** 3.10+ | runs the app |
+| **mpv** | plays the video |
+| **ffmpeg** | downloads & merges subtitles |
+| **fzf** | nicer picker menus (optional) |
 
 ## Install
 
-Pick one:
+### Linux
 
 ```bash
-# 1. pip (simplest)
+# 1. Install the system packages (pick your distro)
+
+# Debian / Ubuntu
+sudo apt install mpv ffmpeg fzf python3 python3-pip python3-venv
+
+# Arch / Artix
+sudo pacman -S mpv ffmpeg fzf python python-pip
+
+# Fedora
+sudo dnf install mpv ffmpeg fzf python3 python3-pip
+
+# macOS (Homebrew)
+brew install mpv ffmpeg fzf python
+
+# 2. Download the app and install it
+git clone https://github.com/mpuss37/nontonaja.git
+cd nontonaja
 pip install --user --break-system-packages .
-nontonaja "spider man"
+```
 
-# 2. setup.sh (creates virtualenv)
-bash setup.sh
-source .venv/bin/activate
-nontonaja "spider man"
+### Android (Termux)
 
-# 3. pipx (isolated)
-pip install --user pipx
-pipx install .
-nontonaja "spider man"
+```bash
+# 1. Install Termux from F-Droid (the Play Store build is outdated)
+#    https://f-droid.org/packages/com.termux/
 
-# 4. Termux (Android)
+# 2. Download the app and run the setup script
+git clone https://github.com/mpuss37/nontonaja.git
+cd nontonaja
 bash setup-termux.sh
 ```
+
+`setup-termux.sh` installs all packages and the app for you.
+
+> **Player on Android:** install **mpv-android** and it will open
+> automatically at full resolution. Other players (VLC, MX Player, ...) can
+> stall mid-playback, so use mpv-android.
+> - Google Play: https://play.google.com/store/apps/details?id=is.xyz.mpv
+> - F-Droid: https://f-droid.org/packages/is.xyz.mpv/
+>
+> No external player? It plays inside the Termux terminal instead.
 
 ## Usage
 
 ```bash
-# Search & play
-nontonaja "spider man"
-nontonaja "the 100"
-
-# Pick quality
-nontonaja -q 720 "spider man"
-nontonaja -q 1080 "avengers"
-
-# Download
-nontonaja -d "spider man"
-
-# Download to folder
-nontonaja -d -o ~/Videos "spider man"
-nontonaja -o ~/Downloads "avengers"
-
-# Check connectivity (DNS, HTTP, proxy) for each source
-nontonaja --diag
+nontonaja "spider man"          # search and play
+nontonaja "the 100"             # TV series (pick season/episode with arrows)
+nontonaja -q 720 "avengers"     # choose quality (480 / 720 / 1080)
+nontonaja -d "spider man"       # download instead of streaming
+nontonaja -d -o ~/Videos "iron man"   # download to a folder
+nontonaja --diag                # troubleshoot connectivity
 ```
 
 ### Flags
@@ -119,81 +77,58 @@ nontonaja --diag
 | Flag | Description |
 |------|-------------|
 | `-q`, `--quality` | Preferred quality: `480`, `720`, `1080` |
-| `-d`, `--download` | Download mode instead of streaming |
-| `-o`, `--output` | Output directory for downloads (default: current dir) |
-| `--diag` | Run connectivity diagnostics |
+| `-d`, `--download` | Download instead of streaming |
+| `-o`, `--output` | Output folder for downloads (default: current folder) |
+| `--diag` | Check DNS/HTTP connectivity |
+
+### While playing
+
+| Key | Action |
+|-----|--------|
+| `Space` | pause |
+| `←` / `→` | seek 10s |
+| `↑` / `↓` | volume |
+| `q` | quit |
 
 ## How it works
 
 1. Search all providers in parallel (results merged and de-duplicated).
-2. Pick title. For TV series use **arrow keys navigation**:
-   - `←`/`→` to change season/episode
-   - `Enter` to confirm selection
-   - `q` to cancel
-3. Pick source + quality:
-   - `1` 480p
-   - `2` 720p
-   - `3` 1080p
-4. Pick action:
-   - `1` Stream – play in `mpv`
-   - `2` Download – save as `.mkv` via `ffmpeg`
-   - `3` Stream & Download – both
-   - `4` Change Quality / Source – switch without restart
-   - `5` Change Season / Episode – series only; switch episode instantly
-   - `6` Exit
-
-> Type `q` to quit at any movie list.
+2. Pick a title. For series, use `←`/`→` to pick season/episode, `Enter` to confirm.
+3. Pick source + quality: `1` 480p · `2` 720p · `3` 1080p.
+4. Pick an action: stream, download, both, change quality/source, change episode, or exit.
 
 Notes:
-- Sources auto-fallback: if title unavailable on chosen source, tries others.
-- Some sources enforce a short server unlock wait before playback; countdown
-  shown and the unlock token is cached for instant replay.
-- Local HTTP proxy rewrites HLS segments (obfuscated extensions) for
-  `mpv`/`ffmpeg` compatibility.
-- **On Android, use `mpv-android` as the external player** (see the Termux note
-  above). Other players can stall mid-playback on these segments.
+- If a title is missing on the chosen source, it automatically tries the others.
+- Some sources require a short unlock wait before playback; the unlock is
+  cached so replays start instantly.
+- A small local proxy rewrites the video segments so `mpv`/`ffmpeg` accept them.
 
 ## Configuration
 
-Create `~/.config/nontonaja/config.toml`:
+Optional. Create `~/.config/nontonaja/config.toml`:
 
 ```toml
 subs_language = "English"
 # download = "."
-# proxy = "socks5://127.0.0.1:1080"   # used only if proxy reachable
+# proxy = "socks5://127.0.0.1:1080"
 # mirrors = { source1 = "https://example.com", source2 = "https://example.org" }
 ```
-
-Keys:
 
 | Key | Description |
 |-----|-------------|
 | `subs_language` | Preferred subtitle language |
-| `download` | Default download directory |
-| `proxy` | SOCKS/HTTP proxy. Auto-skipped with warning if unreachable |
+| `download` | Default download folder |
+| `proxy` | SOCKS/HTTP proxy (skipped with a warning if unreachable) |
 | `mirrors` | Override base URL per source |
-
-Proxy also set via `NONTONAJA_PROXY` or `ALL_PROXY` env vars.
 
 ### Environment variables
 
 | Variable | Description |
 |----------|-------------|
-| `NONTONAJA_NO_EXTERNAL_PLAYER` | Set to `1` to force terminal (ASCII) playback instead of an external player |
+| `NONTONAJA_NO_EXTERNAL_PLAYER=1` | Force terminal (ASCII) playback |
 | `NONTONAJA_MPV_VO` | Override the mpv video output (e.g. `kitty`, `tct`) |
 | `NONTONAJA_PROXY` / `ALL_PROXY` | SOCKS/HTTP proxy |
-| `NONTONAJA_DEBUG_PROXY` | Set to `1` to print HLS proxy logs (playlist refresh, segment fetches) for troubleshooting |
-
-## Features
-
-- **Parallel search** across providers with deduplication
-- **Arrow-key navigation** for season/episode selection
-- **Token caching** for providers that require an unlock step (skip the wait on replay)
-- **Auto-fallback** between sources when content unavailable
-- **Local HLS proxy** for segment compatibility
-- **mpv-android friendly** — recommended player for smooth Android playback
-- **Subtitle integration** with downloads via ffmpeg
-- **Quality selection** with provider-specific options
+| `NONTONAJA_DEBUG_PROXY=1` | Print proxy logs (troubleshooting) |
 
 ## License
 
