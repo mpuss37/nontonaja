@@ -20,6 +20,44 @@ _PORT = 0  # auto-assign
 
 
 class _Handler(BaseHTTPRequestHandler):
+    # HTTP/1.1 so players can use keep-alive / range properly
+    protocol_version = "HTTP/1.1"
+
+    def do_HEAD(self):
+        # Many players probe with HEAD before GET
+        path = self.path.lstrip("/")
+        if path == "playlist.m3u8":
+            data = self.server._build_fresh_playlist()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/vnd.apple.mpegurl")
+            self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            return
+        elif path in ("init.mp4", "init.ts"):
+            url = self.server.init_url
+        elif path.startswith("seg/"):
+            try:
+                idx = int(path.split("/")[1].split(".")[0])
+                url = self.server.seg_map.get(idx)
+            except (ValueError, IndexError):
+                url = None
+        else:
+            url = None
+        if not url:
+            self.send_error(404)
+            return
+        try:
+            r = self.server.httpx_client.head(url, timeout=30)
+            self.send_response(r.status_code)
+            cl = r.headers.get("content-length")
+            if cl:
+                self.send_header("Content-Length", cl)
+            self.send_header("Content-Type", "video/mp4")
+            self.end_headers()
+        except Exception:
+            self.send_error(502)
+
     def do_GET(self):
         path = self.path.lstrip("/")
         if path == "playlist.m3u8":
@@ -42,6 +80,9 @@ class _Handler(BaseHTTPRequestHandler):
         # playlists continue to advance (prevents player stalling once the
         # initial snapshot runs out).
         data = self.server._build_fresh_playlist()
+        if os.environ.get("NONTONAJA_DEBUG_PROXY"):
+            head = data[:400].decode(errors="replace").replace("\n", "\\n")
+            print(f"[proxy] serving playlist ({len(data)}B): {head}", flush=True)
         self.send_response(200)
         self.send_header("Content-Type", "application/vnd.apple.mpegurl")
         # Force no cache for Android players  
