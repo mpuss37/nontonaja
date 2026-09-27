@@ -133,16 +133,6 @@ class _Handler(BaseHTTPRequestHandler):
                     return
                 data = r.content
                 ct = r.headers.get("content-type", "video/mp4")
-                if os.environ.get("NONTONAJA_DUMP_SEG") and idx == 0:
-                    try:
-                        with open("/tmp/nontonaja_seg0.bin", "wb") as f:
-                            f.write(data)
-                        print(
-                            f"[proxy] dumped seg0 {len(data)}B magic={data[:16]!r}",
-                            flush=True,
-                        )
-                    except Exception:
-                        pass
                 break
             except Exception as e:
                 last_exc = e
