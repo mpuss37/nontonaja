@@ -967,18 +967,18 @@ def run(args: argparse.Namespace) -> None:
     if args.download or args.output:
         from .download import download
 
-    download_dir = args.output or config.download_dir or os.getcwd()
-    # Enhanced filename for series  
-    download_title = selected.title
-    download(
-        stream_url,
-        download_dir,
-        download_title,
-        subtitles,
-        config.subs_language,
-        headers=headers,
-    )
-    return
+        download_dir = args.output or config.download_dir or os.getcwd()
+        # Enhanced filename for series  
+        download_title = selected.title
+        download(
+            stream_url,
+            download_dir,
+            download_title,
+            subtitles,
+            config.subs_language,
+            headers=headers,
+        )
+        return
 
     is_series = getattr(selected, "media_type", "movie") not in ("movie", "")
     while True:
