@@ -40,7 +40,7 @@ class _Handler(BaseHTTPRequestHandler):
         # Re-fetch a FRESH playlist on every request so sliding-window HLS
         # playlists continue to advance (prevents player stalling once the
         # initial snapshot runs out).
-        data = self._build_fresh_playlist()
+        data = self.server._build_fresh_playlist()
         self.send_response(200)
         self.send_header("Content-Type", "application/vnd.apple.mpegurl")
         # Force no cache for Android players  

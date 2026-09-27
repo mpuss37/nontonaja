@@ -164,5 +164,51 @@ class TestServeUrlSignature(unittest.TestCase):
         self.assertIn("idx", sig.parameters)
 
 
+class TestHandlerServesPlaylistEndToEnd(unittest.TestCase):
+    """Regression: _serve_playlist must call the SERVER's builder, not the
+    handler (AttributeError: '_Handler' object has no attribute ...)."""
+
+    def setUp(self):
+        self.server = _make_server()
+        self.server._original_url = "https://cdn/sub.m3u8"
+        self.server._sub_url = "https://cdn/sub.m3u8"
+        self.server.playlist_data = "#EXTM3U\nhttps://cdn/a.ts\n"
+
+    def tearDown(self):
+        self.server.server_close()
+
+    def test_serve_playlist_uses_server_builder(self):
+        """Handler._serve_playlist must not reference a handler-level builder."""
+        fresh = "#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:0\nhttps://cdn/a.ts\n"
+
+        class _Resp:
+            status_code = 200
+            text = fresh
+
+        # Point handler at our server, capture written bytes
+        handler = object.__new__(_Handler)
+        handler.server = self.server
+        written = {"data": b""}
+        sent = {"status": None}
+
+        def fake_send_response(code, *a, **k):
+            sent["status"] = code
+
+        class _W:
+            def write(self, b):
+                written["data"] += b
+
+        handler.send_response = fake_send_response
+        handler.send_header = lambda *a, **k: None
+        handler.end_headers = lambda *a, **k: None
+        handler.wfile = _W()
+
+        with patch.object(self.server.httpx_client, "get", return_value=_Resp()):
+            handler._serve_playlist()  # must NOT raise AttributeError
+
+        self.assertEqual(sent["status"], 200)
+        self.assertIn(b"seg/0.ts", written["data"])
+
+
 if __name__ == "__main__":
     unittest.main()
