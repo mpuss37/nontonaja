@@ -105,56 +105,70 @@ class _Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
             return
-        try:
-            # Stream the segment straight through so the player gets bytes as
-            # they arrive (avoids buffering the full segment = long stall).
-            req = self.server.httpx_client.build_request("GET", url, timeout=30)
-            r = self.server.httpx_client.send(req, stream=True)
-            if debug:
-                print(
-                    f"[proxy] seg idx={idx} upstream={r.status_code} "
-                    f"ct={r.headers.get('content-type')} cl={r.headers.get('content-length')}",
-                    flush=True,
-                )
-            # Refresh + retry once on 4xx
-            if r.status_code >= 400 and hasattr(self.server, "_refresh_playlist"):
-                r.close()
-                self.server._refresh_playlist()
-                if idx is not None:
-                    new_url = self.server.seg_map.get(idx)
-                    if new_url:
-                        req = self.server.httpx_client.build_request("GET", new_url, timeout=30)
-                        r = self.server.httpx_client.send(req, stream=True)
-                        if debug:
-                            print(
-                                f"[proxy] seg idx={idx} retry={r.status_code}",
-                                flush=True,
-                            )
 
-            ct = r.headers.get("content-type", "video/mp4")
-            if "video" not in ct:
-                ct = "video/mp4"
-            # Prefer upstream Content-Length when present so the player can
-            # track progress; fall back to chunked (no length) otherwise.
-            cl = r.headers.get("content-length")
-            self.send_response(r.status_code)
+        # Fetch segment fully (with retry). Buffering guarantees we either send
+        # a complete segment with the right Content-Length, or a clean error —
+        # never a half segment that makes the player hang forever.
+        data = None
+        ct = "video/mp4"
+        last_exc = None
+        for attempt in range(3):
+            try:
+                r = self.server.httpx_client.get(url, timeout=30)
+                if debug:
+                    print(
+                        f"[proxy] seg idx={idx} upstream={r.status_code} "
+                        f"ct={r.headers.get('content-type')} len={len(r.content)}",
+                        flush=True,
+                    )
+                if r.status_code >= 400:
+                    # Expired URL -> refresh playlist and retry with new URL
+                    self.server._refresh_playlist()
+                    if idx is not None:
+                        new_url = self.server.seg_map.get(idx)
+                        if new_url and new_url != url:
+                            url = new_url
+                            continue
+                    self.send_error(r.status_code)
+                    return
+                data = r.content
+                ct = r.headers.get("content-type", "video/mp4")
+                break
+            except Exception as e:
+                last_exc = e
+                if debug:
+                    print(
+                        f"[proxy] seg idx={idx} try{attempt + 1} EXC "
+                        f"{type(e).__name__}: {e}",
+                        flush=True,
+                    )
+                continue
+
+        if data is None:
+            if debug:
+                print(f"[proxy] seg idx={idx} FAILED after retries: {last_exc}", flush=True)
+            try:
+                self.send_error(502)
+            except Exception:
+                pass
+            return
+
+        if "video" not in ct:
+            # CDN obfuscates content-type (e.g. image/x-pict). Serve a proper
+            # MPEG-TS type since the playlist advertises .ts segments.
+            ct = "video/mp2t"
+        try:
+            self.send_response(200)
             self.send_header("Content-Type", ct)
             self.send_header("Cache-Control", "no-cache")
             self.send_header("Accept-Ranges", "none")
-            if cl:
-                self.send_header("Content-Length", cl)
+            self.send_header("Content-Length", str(len(data)))
             self.end_headers()
-            for chunk in r.iter_bytes(chunk_size=64 * 1024):
-                self.wfile.write(chunk)
-            r.close()
-        except Exception as e:
+            self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError):
+            # Player cancelled / seeked away — normal.
             if debug:
-                print(f"[proxy] seg idx={idx} EXC {type(e).__name__}: {e}", flush=True)
-            try:
-                if not self.wfile.closed:
-                    self.send_error(502)
-            except Exception:
-                pass
+                print(f"[proxy] seg idx={idx} client disconnected (ok)", flush=True)
 
     def log_message(self, *args):
         pass
