@@ -607,8 +607,9 @@ def _play(
         "--no-ytdl",
         "--msg-level=all=warn",
         "--cache=yes",
-        "--demuxer-max-bytes=50M",
-        "--demuxer-readahead-secs=30",
+        "--demuxer-max-bytes=100M",
+        "--demuxer-readahead-secs=15",
+        "--demuxer-seekable-cache=yes",
         "--slang=id,ind,indonesian,en,eng",
     ]
     vo = os.environ.get("NONTONAJA_MPV_VO")
