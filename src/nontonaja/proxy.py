@@ -7,6 +7,7 @@ localhost with .mp4 extensions, then proxies the actual CDN content.
 
 from __future__ import annotations
 
+import os
 import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -52,7 +53,10 @@ class _Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def _serve_url(self, url: str | None, idx: int | None = None):
+        debug = os.environ.get("NONTONAJA_DEBUG_PROXY")
         if not url:
+            if debug:
+                print(f"[proxy] seg idx={idx} MISSING (no url)", flush=True)
             try:
                 self.send_error(404)
             except Exception:
@@ -60,6 +64,11 @@ class _Handler(BaseHTTPRequestHandler):
             return
         try:
             r = self.server.httpx_client.get(url, timeout=30)
+            if debug:
+                print(
+                    f"[proxy] seg idx={idx} upstream={r.status_code} len={len(r.content)}",
+                    flush=True,
+                )
             # More aggressive refresh on any error
             if r.status_code >= 400 and hasattr(self.server, '_refresh_playlist'):
                 self.server._refresh_playlist()
@@ -68,6 +77,11 @@ class _Handler(BaseHTTPRequestHandler):
                     url = self.server.seg_map.get(idx)
                     if url:
                         r = self.server.httpx_client.get(url, timeout=30)
+                        if debug:
+                            print(
+                                f"[proxy] seg idx={idx} retry={r.status_code} len={len(r.content)}",
+                                flush=True,
+                            )
             
             self.send_response(r.status_code)
             ct = r.headers.get("content-type", "video/mp4")
@@ -79,7 +93,9 @@ class _Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(r.content)))
             self.end_headers()
             self.wfile.write(r.content)
-        except Exception:
+        except Exception as e:
+            if debug:
+                print(f"[proxy] seg idx={idx} EXC {type(e).__name__}: {e}", flush=True)
             try:
                 self.send_error(502)
             except Exception:
@@ -170,7 +186,9 @@ class ProxyServer(ThreadingHTTPServer):
                     ).url
                     return self.httpx_client.get(self._sub_url).text
             return text
-        except Exception:
+        except Exception as e:
+            if os.environ.get("NONTONAJA_DEBUG_PROXY"):
+                print(f"[proxy] _fetch_sub_text FAILED: {type(e).__name__}: {e}", flush=True)
             return None
 
     def _build_fresh_playlist(self) -> bytes:
@@ -194,6 +212,14 @@ class ProxyServer(ThreadingHTTPServer):
         if init_url:
             self.init_url = init_url
         self.playlist_data = rewritten
+        if os.environ.get("NONTONAJA_DEBUG_PROXY"):
+            seqs = sorted(seg_map.keys())
+            print(
+                f"[proxy] playlist refreshed: {len(seg_map)} segs "
+                f"range={seqs[0] if seqs else '-'}..{seqs[-1] if seqs else '-'} "
+                f"total_map={len(self.seg_map)}",
+                flush=True,
+            )
         return rewritten.encode()
 
     def _refresh_playlist(self):
