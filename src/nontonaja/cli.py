@@ -968,12 +968,8 @@ def run(args: argparse.Namespace) -> None:
         from .download import download
 
     download_dir = args.output or config.download_dir or os.getcwd()
-    # Enhanced filename for series
-    is_series = getattr(selected, "media_type", "movie") not in ("movie", "")
-    if is_series and 'season' in locals() and 'episode' in locals():
-        download_title = f"{selected.title}-s{season}-eps{episode}"
-    else:
-        download_title = selected.title
+    # Enhanced filename for series  
+    download_title = selected.title
     download(
         stream_url,
         download_dir,
@@ -999,7 +995,7 @@ def run(args: argparse.Namespace) -> None:
             download_dir = args.output or config.download_dir or os.getcwd()
             # Enhanced filename for series
             is_series = getattr(selected, "media_type", "movie") not in ("movie", "")
-            if is_series and 'season' in locals() and 'episode' in locals():
+            if is_series:
                 download_title = f"{selected.title}-s{season}-eps{episode}"
             else:
                 download_title = selected.title
@@ -1021,7 +1017,7 @@ def run(args: argparse.Namespace) -> None:
             download_dir = args.output or config.download_dir or os.getcwd()
             # Enhanced filename for series
             is_series = getattr(selected, "media_type", "movie") not in ("movie", "")
-            if is_series and 'season' in locals() and 'episode' in locals():
+            if is_series:
                 download_title = f"{selected.title}-s{season}-eps{episode}"
             else:
                 download_title = selected.title
