@@ -73,15 +73,24 @@ class _Handler(BaseHTTPRequestHandler):
             except (ValueError, IndexError):
                 url = None
                 idx = None
+            # Far seek hit a missing index -> refresh once to populate it.
+            if url is None and idx is not None:
+                self.server._last_refresh = 0
+                self.server._build_fresh_playlist()
+                url = self.server.seg_map.get(idx)
             self._serve_url(url, idx)
         else:
             self.send_error(404)
 
     def _serve_playlist(self):
-        # Re-fetch a FRESH playlist on every request so sliding-window HLS
-        # playlists continue to advance (prevents player stalling once the
-        # initial snapshot runs out).
-        data = self.server._build_fresh_playlist()
+        # Re-fetch a FRESH playlist so sliding-window HLS playlists keep
+        # advancing. For VOD (playlist ends with EXT-X-ENDLIST) the segment
+        # list is fixed, so we serve the cached playlist and avoid hammering
+        # upstream on every seek (which caused far-seek stalls).
+        if self.server._is_vod and self.server.playlist_data:
+            data = self.server.playlist_data.encode()
+        else:
+            data = self.server._build_fresh_playlist()
         if os.environ.get("NONTONAJA_DEBUG_PROXY"):
             head = data[:400].decode(errors="replace").replace("\n", "\\n")
             print(f"[proxy] serving playlist ({len(data)}B): {head}", flush=True)
@@ -227,6 +236,7 @@ class ProxyServer(ThreadingHTTPServer):
         self._sub_url = None       # Resolved variant (sub) playlist URL
         self._preferred_quality = None
         self._last_refresh = 0  # Timestamp
+        self._is_vod = False    # Set once we know the playlist is VOD
         cfg = load_config()
         self.httpx_client = httpx.Client(
             verify=False, follow_redirects=True, timeout=30,
@@ -354,6 +364,9 @@ def start_proxy(
     server._original_url = master_url
     server._sub_url = sub_url_hint
     server._preferred_quality = preferred
+    # VOD playlists are fixed (marked by EXT-X-ENDLIST); we can serve the
+    # cached playlist and avoid re-fetching upstream on every seek.
+    server._is_vod = "#EXT-X-ENDLIST" in sub_text
 
     rewritten, init_url, seg_map = _rewrite_m3u8(sub_text, port)
     server.playlist_data = rewritten

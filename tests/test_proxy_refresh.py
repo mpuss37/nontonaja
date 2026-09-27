@@ -210,5 +210,73 @@ class TestHandlerServesPlaylistEndToEnd(unittest.TestCase):
         self.assertIn(b"seg/0.ts", written["data"])
 
 
+class TestFarSeekBehavior(unittest.TestCase):
+    """Far seeking must not hammer upstream and must resolve missing indices."""
+
+    def _handler_with(self, server):
+        handler = object.__new__(_Handler)
+        handler.server = server
+        handler._resp_status = None
+        handler._headers = []
+        handler.send_response = lambda c, *a, **k: setattr(handler, "_resp_status", c)
+        handler.send_header = lambda *a, **k: handler._headers.append(a)
+        handler.end_headers = lambda *a, **k: None
+        handler.send_error = lambda c, *a, **k: setattr(handler, "_resp_status", c)
+        return handler
+
+    def test_vod_playlist_not_refetched(self):
+        """For VOD (cached playlist_data), serving playlist must not hit upstream."""
+        server = _make_server()
+        server._is_vod = True
+        server.playlist_data = "#EXTM3U\nhttp://127.0.0.1:1/seg/0.ts\n"
+        handler = self._handler_with(server)
+        handler.wfile = type("W", (), {"write": lambda self, b: None})()
+
+        calls = {"n": 0}
+
+        def counting_get(*a, **k):
+            calls["n"] += 1
+            raise AssertionError("upstream must not be called for VOD")
+
+        with patch.object(server.httpx_client, "get", side_effect=counting_get):
+            handler._serve_playlist()
+
+        self.assertEqual(calls["n"], 0)
+        self.assertEqual(handler._resp_status, 200)
+        server.server_close()
+
+    def test_missing_index_triggers_refresh(self):
+        """do_GET for an unknown seg index must refresh before serving."""
+        server = _make_server()
+        server._is_vod = False
+        server._last_refresh = 0
+        server.seg_map = {}
+        server._original_url = "https://cdn/sub.m3u8"
+        server._sub_url = "https://cdn/sub.m3u8"
+        server.playlist_data = ""
+
+        fresh = (
+            "#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:0\n"
+            + "".join(f"https://cdn/s{i}.ts\n" for i in range(50))
+        )
+
+        class _Resp:
+            status_code = 200
+            text = fresh
+            headers = {"content-type": "video/mp2t"}
+            content = b"\x47" * 10
+
+        handler = self._handler_with(server)
+        handler.path = "/seg/40.ts"
+        handler.wfile = type("W", (), {"write": lambda self, b: None})()
+
+        with patch.object(server.httpx_client, "get", return_value=_Resp()):
+            handler.do_GET()
+
+        # After refresh, index 40 must be known
+        self.assertIn(40, server.seg_map)
+        server.server_close()
+
+
 if __name__ == "__main__":
     unittest.main()
