@@ -1,5 +1,9 @@
 # nontonaja
 
+![version](https://img.shields.io/github/v/release/mpuss37/nontonaja)
+![license](https://img.shields.io/github/license/mpuss37/nontonaja)
+![python](https://img.shields.io/badge/python-3.10%2B-blue)
+
 Search, stream, and download movies & TV series from your terminal using
 `mpv` + `ffmpeg`.
 
