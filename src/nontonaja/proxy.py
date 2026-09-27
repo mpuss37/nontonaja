@@ -37,7 +37,10 @@ class _Handler(BaseHTTPRequestHandler):
             self.send_error(404)
 
     def _serve_playlist(self):
-        data = self.server.playlist_data.encode()
+        # Re-fetch a FRESH playlist on every request so sliding-window HLS
+        # playlists continue to advance (prevents player stalling once the
+        # initial snapshot runs out).
+        data = self._build_fresh_playlist()
         self.send_response(200)
         self.send_header("Content-Type", "application/vnd.apple.mpegurl")
         # Force no cache for Android players  
@@ -87,11 +90,27 @@ class _Handler(BaseHTTPRequestHandler):
 
 
 def _rewrite_m3u8(text: str, port: int) -> tuple[str, str, dict[int, str]]:
-    """Rewrite m3u8: CDN URLs -> localhost proxy with .mp4 extensions."""
+    """Rewrite m3u8: CDN URLs -> localhost proxy with .mp4 extensions.
+
+    Segment indices are offset by EXT-X-MEDIA-SEQUENCE so that indices are
+    absolute and monotonic across sliding-window refreshes. This lets a player
+    that fetched an earlier playlist still resolve seg/N.ts correctly.
+    """
     init_url = ""
     seg_map: dict[int, str] = {}
     new_lines: list[str] = []
 
+    # Absolute starting index = media sequence number
+    base = 0
+    for line in text.split("\n"):
+        if line.startswith("#EXT-X-MEDIA-SEQUENCE:"):
+            try:
+                base = int(line.split(":")[1].strip())
+            except (ValueError, IndexError):
+                base = 0
+            break
+
+    pos = 0
     for line in text.split("\n"):
         if "#EXT-X-MAP:" in line and "URI=" in line:
             m = re.search(r'URI="([^"]+)"', line)
@@ -101,7 +120,8 @@ def _rewrite_m3u8(text: str, port: int) -> tuple[str, str, dict[int, str]]:
             else:
                 new_lines.append(line)
         elif line.startswith("http"):
-            idx = len(seg_map)
+            idx = base + pos
+            pos += 1
             seg_map[idx] = line.strip()
             new_lines.append(f"http://127.0.0.1:{port}/seg/{idx}.ts")
         else:
@@ -119,6 +139,7 @@ class ProxyServer(ThreadingHTTPServer):
         self.init_url = init_url
         self.seg_map = seg_map
         self._original_url = None  # Store for refresh
+        self._sub_url = None       # Resolved variant (sub) playlist URL
         self._preferred_quality = None
         self._last_refresh = 0  # Timestamp
         cfg = load_config()
@@ -127,6 +148,53 @@ class ProxyServer(ThreadingHTTPServer):
             limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
             **({"proxy": cfg.proxy} if cfg.proxy else {}),
         )
+
+    def _fetch_sub_text(self) -> str | None:
+        """Fetch the current sub-playlist text (resolving master if needed)."""
+        if not self._original_url:
+            return None
+        try:
+            # Prefer the already-resolved sub playlist URL (avoids re-parsing
+            # the master each time and keeps the same quality).
+            if self._sub_url:
+                return self.httpx_client.get(self._sub_url).text
+
+            resp = self.httpx_client.get(self._original_url)
+            text = resp.text
+            if "#EXT-X-STREAM-INF" in text:
+                from .quality import parse_m3u8, pick_variant
+                qualities = parse_m3u8(text, base_url=self._original_url)
+                if qualities:
+                    self._sub_url = pick_variant(
+                        qualities, self._preferred_quality or 720
+                    ).url
+                    return self.httpx_client.get(self._sub_url).text
+            return text
+        except Exception:
+            return None
+
+    def _build_fresh_playlist(self) -> bytes:
+        """Re-fetch upstream and rebuild the served playlist with absolute
+        (media-sequence based) indices. Falls back to the last known good
+        playlist if the upstream fetch fails."""
+        sub_text = self._fetch_sub_text()
+        if not sub_text:
+            return self.playlist_data.encode()
+
+        try:
+            rewritten, init_url, seg_map = _rewrite_m3u8(
+                sub_text, self.server_address[1]
+            )
+        except Exception:
+            return self.playlist_data.encode()
+
+        # Merge new segments into seg_map (never drop old ones — the player may
+        # still request an earlier index). Absolute indices make this safe.
+        self.seg_map.update(seg_map)
+        if init_url:
+            self.init_url = init_url
+        self.playlist_data = rewritten
+        return rewritten.encode()
 
     def _refresh_playlist(self):
         """Refresh expired playlist URLs while preserving segment indices."""
@@ -138,43 +206,9 @@ class ProxyServer(ThreadingHTTPServer):
 
         if not self._original_url:
             return
-        try:
-            self._last_refresh = now
-            resp = self.httpx_client.get(self._original_url)
-            playlist_text = resp.text
-
-            if "#EXT-X-STREAM-INF" in playlist_text:
-                from .quality import parse_m3u8, pick_variant
-                qualities = parse_m3u8(playlist_text, base_url=self._original_url)
-                if qualities:
-                    sub_url = pick_variant(qualities, self._preferred_quality or 720).url
-                    resp2 = self.httpx_client.get(sub_url)
-                    sub_text = resp2.text
-                else:
-                    sub_text = playlist_text
-            else:
-                sub_text = playlist_text
-
-            # Extract fresh segment URLs by position (preserve index order)
-            fresh_urls = [
-                ln.strip() for ln in sub_text.split("\n")
-                if ln.strip().startswith("http")
-            ]
-
-            # Update existing indices in-place so the player's old
-            # playlist indices still resolve to valid, fresh URLs.
-            for i, fresh in enumerate(fresh_urls):
-                self.seg_map[i] = fresh
-
-            # Also handle #EXT-X-MAP init URL refresh
-            for ln in sub_text.split("\n"):
-                if "#EXT-X-MAP:" in ln and "URI=" in ln:
-                    m = re.search(r'URI="([^"]+)"', ln)
-                    if m:
-                        self.init_url = m.group(1)
-                        break
-        except Exception:
-            pass  # Keep old URLs on refresh failure
+        self._last_refresh = now
+        # Delegate to the fresh builder; it merges absolute indices safely.
+        self._build_fresh_playlist()
 
 
 def start_proxy(
@@ -199,6 +233,7 @@ def start_proxy(
     resp = client.get(master_url)
     playlist_text = resp.text
 
+    sub_url_hint = None
     if "#EXT-X-STREAM-INF" in playlist_text:
         from .quality import parse_m3u8, pick_variant
 
@@ -206,6 +241,7 @@ def start_proxy(
         if not qualities:
             raise ValueError("No sub-playlist found in master m3u8")
         sub_url = pick_variant(qualities, preferred).url
+        sub_url_hint = sub_url
 
         resp2 = client.get(sub_url)
         sub_text = resp2.text
@@ -217,6 +253,7 @@ def start_proxy(
     
     # Store for refresh capability
     server._original_url = master_url
+    server._sub_url = sub_url_hint
     server._preferred_quality = preferred
 
     rewritten, init_url, seg_map = _rewrite_m3u8(sub_text, port)
