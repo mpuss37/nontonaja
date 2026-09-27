@@ -617,6 +617,9 @@ def _play(
     vo = os.environ.get("NONTONAJA_MPV_VO")
     if not vo and _is_termux():
         vo = "tct"
+    elif not vo and not _is_termux():
+        # Linux CLI headless mode - no video output
+        vo = "null"
     if vo:
         mpv_cmd += [f"--vo={vo}"]
     if _is_termux():
@@ -626,6 +629,9 @@ def _play(
         # The Lua OSC redraws text over the ASCII frame (visible flicker),
         # and tct's default per-line buffering tears between frames.
         mpv_cmd += ["--osc=no"]
+    elif not _is_termux():
+        # Linux CLI - audio only, no GUI
+        mpv_cmd += ["--vid=no", "--no-video", "--terminal=yes"]
         if "vo-tct-buffering" in _mpv_option_names():
             mpv_cmd += ["--vo-tct-buffering=frame"]
         input_conf = os.path.join(sub_dir, "input.conf")
