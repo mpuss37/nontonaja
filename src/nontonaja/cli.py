@@ -682,8 +682,6 @@ def _play(
             "pakai lanskap, kecilkan font (Settings → Font size). "
             "Buka keyboard: volume bawah + B.\n"
         )
-        # Debug: show MPV command
-        print(f"Debug MPV: {' '.join(mpv_cmd)}")
         try:
             subprocess.run(mpv_cmd)
         finally:
@@ -695,9 +693,7 @@ def _play(
 
         def _run_bg():
             try:
-                print(f"Debug MPV detached: {' '.join(mpv_cmd)}")
-                # Temporarily show MPV output for debugging
-                subprocess.run(mpv_cmd)
+                subprocess.run(mpv_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             finally:
                 _cleanup()
 
