@@ -31,7 +31,8 @@ class _Handler(BaseHTTPRequestHandler):
                 url = self.server.seg_map.get(idx)
             except (ValueError, IndexError):
                 url = None
-            self._serve_url(url)
+                idx = None
+            self._serve_url(url, idx)
         else:
             self.send_error(404)
 
@@ -47,7 +48,7 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def _serve_url(self, url: str | None):
+    def _serve_url(self, url: str | None, idx: int | None = None):
         if not url:
             try:
                 self.send_error(404)
@@ -60,9 +61,10 @@ class _Handler(BaseHTTPRequestHandler):
             if r.status_code >= 400 and hasattr(self.server, '_refresh_playlist'):
                 self.server._refresh_playlist()
                 # Retry with new URL
-                url = self.server.seg_map.get(idx)
-                if url:
-                    r = self.server.httpx_client.get(url, timeout=30)
+                if idx is not None:
+                    url = self.server.seg_map.get(idx)
+                    if url:
+                        r = self.server.httpx_client.get(url, timeout=30)
             
             self.send_response(r.status_code)
             ct = r.headers.get("content-type", "video/mp4")
@@ -127,20 +129,20 @@ class ProxyServer(ThreadingHTTPServer):
         )
 
     def _refresh_playlist(self):
-        """Refresh expired playlist URLs"""
+        """Refresh expired playlist URLs while preserving segment indices."""
         import time
         now = time.time()
-        # Throttle refresh to max once per 30 seconds
-        if now - self._last_refresh < 30:
+        # Throttle refresh to max once per 10 seconds
+        if now - self._last_refresh < 10:
             return
-        
+
         if not self._original_url:
             return
         try:
             self._last_refresh = now
             resp = self.httpx_client.get(self._original_url)
             playlist_text = resp.text
-            
+
             if "#EXT-X-STREAM-INF" in playlist_text:
                 from .quality import parse_m3u8, pick_variant
                 qualities = parse_m3u8(playlist_text, base_url=self._original_url)
@@ -152,12 +154,25 @@ class ProxyServer(ThreadingHTTPServer):
                     sub_text = playlist_text
             else:
                 sub_text = playlist_text
-            
-            # Update playlist and segment map
-            new_playlist, new_init, new_seg_map = _rewrite_m3u8(sub_text, self.server_address[1])
-            self.playlist_data = new_playlist
-            self.init_url = new_init
-            self.seg_map = new_seg_map
+
+            # Extract fresh segment URLs by position (preserve index order)
+            fresh_urls = [
+                ln.strip() for ln in sub_text.split("\n")
+                if ln.strip().startswith("http")
+            ]
+
+            # Update existing indices in-place so the player's old
+            # playlist indices still resolve to valid, fresh URLs.
+            for i, fresh in enumerate(fresh_urls):
+                self.seg_map[i] = fresh
+
+            # Also handle #EXT-X-MAP init URL refresh
+            for ln in sub_text.split("\n"):
+                if "#EXT-X-MAP:" in ln and "URI=" in ln:
+                    m = re.search(r'URI="([^"]+)"', ln)
+                    if m:
+                        self.init_url = m.group(1)
+                        break
         except Exception:
             pass  # Keep old URLs on refresh failure
 
