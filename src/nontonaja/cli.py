@@ -967,15 +967,21 @@ def run(args: argparse.Namespace) -> None:
     if args.download or args.output:
         from .download import download
 
-        download_dir = args.output or config.download_dir or os.getcwd()
-        download(
-            stream_url,
-            download_dir,
-            selected.title,
-            subtitles,
-            config.subs_language,
-            headers=headers,
-        )
+    download_dir = args.output or config.download_dir or os.getcwd()
+    # Enhanced filename for series
+    is_series = getattr(selected, "media_type", "movie") not in ("movie", "")
+    if is_series and 'season' in locals() and 'episode' in locals():
+        download_title = f"{selected.title}-s{season}-eps{episode}"
+    else:
+        download_title = selected.title
+    download(
+        stream_url,
+        download_dir,
+        download_title,
+        subtitles,
+        config.subs_language,
+        headers=headers,
+    )
         return
 
     is_series = getattr(selected, "media_type", "movie") not in ("movie", "")
@@ -991,10 +997,16 @@ def run(args: argparse.Namespace) -> None:
             from .download import download
 
             download_dir = args.output or config.download_dir or os.getcwd()
+            # Enhanced filename for series
+            is_series = getattr(selected, "media_type", "movie") not in ("movie", "")
+            if is_series and 'season' in locals() and 'episode' in locals():
+                download_title = f"{selected.title}-s{season}-eps{episode}"
+            else:
+                download_title = selected.title
             download(
                 stream_url,
                 download_dir,
-                selected.title,
+                download_title,
                 subtitles,
                 config.subs_language,
                 headers=headers,
@@ -1007,10 +1019,16 @@ def run(args: argparse.Namespace) -> None:
                 stream_url, selected.title, subtitles, headers=headers, detach=True, quality=quality
             )
             download_dir = args.output or config.download_dir or os.getcwd()
+            # Enhanced filename for series
+            is_series = getattr(selected, "media_type", "movie") not in ("movie", "")
+            if is_series and 'season' in locals() and 'episode' in locals():
+                download_title = f"{selected.title}-s{season}-eps{episode}"
+            else:
+                download_title = selected.title
             download(
                 stream_url,
                 download_dir,
-                selected.title,
+                download_title,
                 subtitles,
                 config.subs_language,
                 headers=headers,
