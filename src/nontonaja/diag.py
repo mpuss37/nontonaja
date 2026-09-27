@@ -8,10 +8,17 @@ from .config import load_config
 from .hosts import _DOMAIN_IPS, _doh_resolve, _original_getaddrinfo
 
 _DOMAINS = [
-    ("flixhq.ws", "https://flixhq.ws", "FlixHQ"),
-    ("tv12.lk21official.cc", "https://tv12.lk21official.cc", "LK21"),
-    ("z2.idlixku.com", "https://z2.idlixku.com/api/search?q=naruto", "IDLIX API"),
+    ("flixhq.ws", "https://flixhq.ws", "Source 1"),
+    ("tv12.lk21official.cc", "https://tv12.lk21official.cc", "Source 2"),
+    ("z2.idlixku.com", "https://z2.idlixku.com/api/search?q=naruto", "Source 3"),
 ]
+
+
+def _mask(domain: str) -> str:
+    """Mask a domain for display so source hosts are not revealed."""
+    if len(domain) <= 4:
+        return "*" * len(domain)
+    return domain[0] + "*" * (len(domain) - 2) + domain[-1]
 
 
 def _resolve_doh(domain: str) -> str | None:
@@ -93,7 +100,7 @@ def run_diagnostics() -> None:
             match = "OK" if doh_ip == hardcoded else "STALE"
         else:
             match = "FAIL"
-        print(f"  {domain:<30} {hardcoded:<18} {doh_str:<18} {match}")
+        print(f"  {_mask(domain):<30} {hardcoded:<18} {doh_str:<18} {match}")
 
     # --- Section 2: HTTP Connectivity ---
     print("\n2. HTTP CONNECTIVITY")
@@ -139,14 +146,14 @@ def run_diagnostics() -> None:
     for domain, status, detail, label in http_results:
         if detail.startswith("BLOCKED"):
             blocked = True
-            issues.append(f"{label} ({domain}) - {status} (request ditolak server)")
+            issues.append(f"{label} - {status} (request ditolak server)")
         elif status.startswith(("TIMEOUT", "CONN_ERR")):
             unreachable = True
-            issues.append(f"{label} ({domain}) - {status}")
+            issues.append(f"{label} - {status}")
         doh_ip = _resolve_doh(domain)
         if doh_ip and doh_ip != _DOMAIN_IPS.get(domain, ["?"])[0]:
             issues.append(
-                f"{label} ({domain}) - IP changed: {_DOMAIN_IPS.get(domain, ['?'])[0]} -> {doh_ip}"
+                f"{label} - IP changed: {_DOMAIN_IPS.get(domain, ['?'])[0]} -> {doh_ip}"
             )
 
     if issues:

@@ -50,7 +50,7 @@ termux-setup-storage
 > `NONTONAJA_NO_EXTERNAL_PLAYER=1`.
 >
 > **Use `mpv-android` — other players (VLC, MX Player, Visha, ...) may
-> stall mid-playback** because the obfuscated HLS segments from these CDNs are
+> stall mid-playback** because the segment streams from these providers are
 > not handled well by them. `mpv-android` plays them smoothly.
 >
 > - **Google Play:** https://play.google.com/store/apps/details?id=is.xyz.mpv
@@ -125,15 +125,15 @@ nontonaja --diag
 
 ## How it works
 
-1. Search **LK21, FlixHQ, and IDLIX** in parallel (results merged and de-duplicated).
+1. Search all providers in parallel (results merged and de-duplicated).
 2. Pick title. For TV series use **arrow keys navigation**:
    - `←`/`→` to change season/episode
    - `Enter` to confirm selection
    - `q` to cancel
 3. Pick source + quality:
-   - `1` 480p – LK21 (P2P) + subtitles
-   - `2` 720p – FlixHQ (M3U8) + subtitles
-   - `3` 1080p – FlixHQ (M3U8) + subtitles
+   - `1` 480p
+   - `2` 720p
+   - `3` 1080p
 4. Pick action:
    - `1` Stream – play in `mpv`
    - `2` Download – save as `.mkv` via `ffmpeg`
@@ -146,10 +146,12 @@ nontonaja --diag
 
 Notes:
 - Sources auto-fallback: if title unavailable on chosen source, tries others.
-- IDLIX enforces 15s server unlock wait before playback; countdown shown. Unlock token cached for instant replay.
-- Local HTTP proxy rewrites HLS segments (obfuscated `.pict` extensions) for `mpv`/`ffmpeg` compatibility.
+- Some sources enforce a short server unlock wait before playback; countdown
+  shown and the unlock token is cached for instant replay.
+- Local HTTP proxy rewrites HLS segments (obfuscated extensions) for
+  `mpv`/`ffmpeg` compatibility.
 - **On Android, use `mpv-android` as the external player** (see the Termux note
-  above). Other players can stall mid-playback on these obfuscated segments.
+  above). Other players can stall mid-playback on these segments.
 
 ## Configuration
 
@@ -159,7 +161,7 @@ Create `~/.config/nontonaja/config.toml`:
 subs_language = "English"
 # download = "."
 # proxy = "socks5://127.0.0.1:1080"   # used only if proxy reachable
-# mirrors = { flixhq = "https://flixhq.example", lk21 = "https://lk21.example" }
+# mirrors = { source1 = "https://example.com", source2 = "https://example.org" }
 ```
 
 Keys:
@@ -184,11 +186,11 @@ Proxy also set via `NONTONAJA_PROXY` or `ALL_PROXY` env vars.
 
 ## Features
 
-- **Parallel search** across 3 providers with deduplication
+- **Parallel search** across providers with deduplication
 - **Arrow-key navigation** for season/episode selection
-- **Token caching** for IDLIX auth (skip 15s unlock on replay)
+- **Token caching** for providers that require an unlock step (skip the wait on replay)
 - **Auto-fallback** between sources when content unavailable
-- **Local HLS proxy** for obfuscated segment compatibility
+- **Local HLS proxy** for segment compatibility
 - **mpv-android friendly** — recommended player for smooth Android playback
 - **Subtitle integration** with downloads via ffmpeg
 - **Quality selection** with provider-specific options

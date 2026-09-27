@@ -410,19 +410,19 @@ def _search(query: str) -> tuple[list, list[str]]:
             lk21_results = f_lk21.result()
         except Exception as e:
             lk21_results = []
-            errors.append(f"LK21: {e}")
+            errors.append(f"Source 1: {e}")
 
         try:
             flixhq_results = f_flixhq.result()
         except Exception as e:
             flixhq_results = []
-            errors.append(f"FlixHQ: {e}")
+            errors.append(f"Source 2: {e}")
 
         try:
             idlix_results = f_idlix.result()
         except Exception as e:
             idlix_results = []
-            errors.append(f"IDLIX: {e}")
+            errors.append(f"Source 3: {e}")
 
     # Single-pass deduplication with pre-normalized keys
     seen: set[str] = set()
