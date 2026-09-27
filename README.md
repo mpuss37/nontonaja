@@ -49,7 +49,7 @@ termux-setup-storage
 > in terminal mode. Force terminal playback with
 > `NONTONAJA_NO_EXTERNAL_PLAYER=1`.
 >
-> ⚠️ **Use `mpv-android` — other players (VLC, MX Player, Visha, ...) may
+> **Use `mpv-android` — other players (VLC, MX Player, Visha, ...) may
 > stall mid-playback** because the obfuscated HLS segments from these CDNs are
 > not handled well by them. `mpv-android` plays them smoothly.
 >
