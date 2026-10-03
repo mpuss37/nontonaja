@@ -548,6 +548,7 @@ def _play(
     headers: dict | None = None,
     detach: bool = False,
     quality: int | None = None,
+    resolver=None,
 ) -> None:
     sub_dir = tempfile.mkdtemp(prefix="nontonaja-subs-")
     local_subs = []
@@ -559,7 +560,9 @@ def _play(
     try:
         from .proxy import start_proxy
 
-        local_stream, proxy_server = start_proxy(stream_url, headers=headers, preferred=quality)
+        local_stream, proxy_server = start_proxy(
+            stream_url, headers=headers, preferred=quality, resolver=resolver
+        )
         print(f"proxy ready: {local_stream}")
     except Exception as e:
         print(f"proxy failed: {e}")
@@ -967,6 +970,18 @@ def run(args: argparse.Namespace) -> None:
 
     stream_url, subtitles, headers = stream
 
+    # Resolver lets the local proxy re-resolve the stream if the provider's
+    # URLs/tokens expire during long playback (avoids mid-movie freezes).
+    def _resolver():
+        try:
+            fresh = _get_stream(selected, quality, source_choice, season, episode)
+        except Exception:
+            return None
+        if not fresh:
+            return None
+        fresh_url, _fresh_subs, fresh_headers = fresh
+        return fresh_url, fresh_headers
+
     if args.download or args.output:
         from .download import download
 
@@ -990,7 +1005,8 @@ def run(args: argparse.Namespace) -> None:
             break
         elif action == "play":
             _play(
-                stream_url, selected.title, subtitles, headers=headers, detach=True, quality=quality
+                stream_url, selected.title, subtitles, headers=headers, detach=True, quality=quality,
+                resolver=_resolver,
             )
         elif action == "download":
             from .download import download
@@ -1015,7 +1031,8 @@ def run(args: argparse.Namespace) -> None:
             from .download import download
 
             _play(
-                stream_url, selected.title, subtitles, headers=headers, detach=True, quality=quality
+                stream_url, selected.title, subtitles, headers=headers, detach=True, quality=quality,
+                resolver=_resolver,
             )
             download_dir = args.output or config.download_dir or os.getcwd()
             # Enhanced filename for series

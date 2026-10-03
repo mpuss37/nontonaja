@@ -121,7 +121,7 @@ class _Handler(BaseHTTPRequestHandler):
         data = None
         ct = "video/mp4"
         last_exc = None
-        for attempt in range(3):
+        for attempt in range(4):
             try:
                 r = self.server.httpx_client.get(url, timeout=30)
                 if debug:
@@ -134,6 +134,13 @@ class _Handler(BaseHTTPRequestHandler):
                     # Expired URL -> refresh playlist and retry with new URL
                     self.server._refresh_playlist()
                     if idx is not None:
+                        new_url = self.server.seg_map.get(idx)
+                        if new_url and new_url != url:
+                            url = new_url
+                            continue
+                    # Playlist refresh didn't help: the whole stream token is
+                    # likely expired (long playback). Re-resolve the provider.
+                    if self.server._full_reload() and idx is not None:
                         new_url = self.server.seg_map.get(idx)
                         if new_url and new_url != url:
                             url = new_url
@@ -151,6 +158,11 @@ class _Handler(BaseHTTPRequestHandler):
                         f"{type(e).__name__}: {e}",
                         flush=True,
                     )
+                # On network errors also attempt a full reload once.
+                if attempt >= 2 and self.server._full_reload() and idx is not None:
+                    new_url = self.server.seg_map.get(idx)
+                    if new_url:
+                        url = new_url
                 continue
 
         if data is None:
@@ -237,6 +249,8 @@ class ProxyServer(ThreadingHTTPServer):
         self._preferred_quality = None
         self._last_refresh = 0  # Timestamp
         self._is_vod = False    # Set once we know the playlist is VOD
+        self._resolver = None   # Optional callback to re-resolve the stream
+        self._last_full_reload = 0.0
         cfg = load_config()
         self.httpx_client = httpx.Client(
             verify=False, follow_redirects=True, timeout=30,
@@ -319,18 +333,98 @@ class ProxyServer(ThreadingHTTPServer):
         # Delegate to the fresh builder; it merges absolute indices safely.
         self._build_fresh_playlist()
 
+    def _full_reload(self) -> bool:
+        """Re-resolve the whole stream via the resolver callback and rebuild
+        the segment map. Used when upstream tokens expire after long playback.
+        Returns True on success."""
+        import time
+        if not self._resolver:
+            return False
+        now = time.time()
+        # Throttle full reloads to avoid hammering the provider.
+        if now - self._last_full_reload < 20:
+            return False
+        self._last_full_reload = now
+        try:
+            result = self._resolver()
+        except Exception as e:
+            if os.environ.get("NONTONAJA_DEBUG_PROXY"):
+                print(f"[proxy] full reload failed: {type(e).__name__}: {e}", flush=True)
+            return False
+        if not result:
+            return False
+        new_url, new_headers = result
+        if not new_url:
+            return False
 
-def start_proxy(
-    master_url: str, headers: dict | None = None, preferred: int | None = None
-) -> tuple[str, ProxyServer]:
-    """Start proxy for an HLS stream. preferred = desired height (480/720/1080)."""
+        headers = _default_headers_for(new_url, new_headers)
+        self.httpx_client.headers.update(headers)
+        self._original_url = new_url
+        self._sub_url = None  # force re-resolve from the new master
+        text = self._fetch_sub_text()
+        if not text:
+            return False
+        try:
+            rewritten, init_url, seg_map = _rewrite_m3u8(
+                text, self.server_address[1]
+            )
+        except Exception:
+            return False
+        self.seg_map.update(seg_map)
+        if init_url:
+            self.init_url = init_url
+        self.playlist_data = rewritten
+        if os.environ.get("NONTONAJA_DEBUG_PROXY"):
+            seqs = sorted(seg_map.keys())
+            print(
+                f"[proxy] FULL RELOAD ok: {len(seg_map)} segs "
+                f"range={seqs[0] if seqs else '-'}..{seqs[-1] if seqs else '-'}",
+                flush=True,
+            )
+        return True
+
+
+def _default_headers_for(url: str, headers: dict | None) -> dict:
     req_headers = {
         "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
     }
     if headers:
         req_headers.update(headers)
-    elif "playcdn.de" in master_url:
+    elif "playcdn.de" in url:
         req_headers["Referer"] = "https://playcdn.de/"
+    return req_headers
+
+
+def _resolve_playlist(client: httpx.Client, master_url: str, preferred: int | None):
+    """Fetch master->sub playlist. Returns (sub_url, sub_text)."""
+    resp = client.get(master_url)
+    playlist_text = resp.text
+
+    if "#EXT-X-STREAM-INF" in playlist_text:
+        from .quality import parse_m3u8, pick_variant
+
+        qualities = parse_m3u8(playlist_text, base_url=master_url)
+        if not qualities:
+            raise ValueError("No sub-playlist found in master m3u8")
+        sub_url = pick_variant(qualities, preferred).url
+        sub_text = client.get(sub_url).text
+        return sub_url, sub_text
+    return master_url, playlist_text
+
+
+def start_proxy(
+    master_url: str,
+    headers: dict | None = None,
+    preferred: int | None = None,
+    resolver=None,
+) -> tuple[str, ProxyServer]:
+    """Start proxy for an HLS stream. preferred = desired height (480/720/1080).
+
+    resolver: optional callable returning (new_master_url, new_headers) used to
+    re-resolve the stream when the upstream URLs expire (long playback). This
+    lets the proxy recover mid-playback instead of stalling.
+    """
+    req_headers = _default_headers_for(master_url, headers)
 
     cfg = load_config()
     client = httpx.Client(
@@ -339,31 +433,16 @@ def start_proxy(
         **({"proxy": cfg.proxy} if cfg.proxy else {}),
     )
 
-    resp = client.get(master_url)
-    playlist_text = resp.text
-
-    sub_url_hint = None
-    if "#EXT-X-STREAM-INF" in playlist_text:
-        from .quality import parse_m3u8, pick_variant
-
-        qualities = parse_m3u8(playlist_text, base_url=master_url)
-        if not qualities:
-            raise ValueError("No sub-playlist found in master m3u8")
-        sub_url = pick_variant(qualities, preferred).url
-        sub_url_hint = sub_url
-
-        resp2 = client.get(sub_url)
-        sub_text = resp2.text
-    else:
-        sub_text = playlist_text
+    sub_url_hint, sub_text = _resolve_playlist(client, master_url, preferred)
 
     server = ProxyServer(("127.0.0.1", _PORT), _Handler, "", "", {})
     port = server.server_address[1]
-    
+
     # Store for refresh capability
     server._original_url = master_url
     server._sub_url = sub_url_hint
     server._preferred_quality = preferred
+    server._resolver = resolver
     # VOD playlists are fixed (marked by EXT-X-ENDLIST); we can serve the
     # cached playlist and avoid re-fetching upstream on every seek.
     server._is_vod = "#EXT-X-ENDLIST" in sub_text

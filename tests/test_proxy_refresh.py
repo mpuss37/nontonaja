@@ -278,5 +278,68 @@ class TestFarSeekBehavior(unittest.TestCase):
         server.server_close()
 
 
+class TestFullReload(unittest.TestCase):
+    """When upstream tokens expire, _full_reload re-resolves via callback."""
+
+    def test_full_reload_updates_segments(self):
+        server = _make_server()
+        server._resolver = lambda: (
+            "https://cdn/new-master.m3u8",
+            {"Referer": "https://cdn/"},
+        )
+        server._original_url = "https://cdn/old-master.m3u8"
+        server._sub_url = "https://cdn/old-sub.m3u8"
+        server.playlist_data = "#EXTM3U\nold\n"
+        server.seg_map = {0: "https://cdn/old0.ts"}
+
+        fresh = (
+            "#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:0\n"
+            + "".join(f"https://cdn/new{i}.ts\n" for i in range(5))
+        )
+
+        class _Resp:
+            status_code = 200
+            text = fresh
+
+        with patch.object(server.httpx_client, "get", return_value=_Resp()):
+            ok = server._full_reload()
+
+        self.assertTrue(ok)
+        self.assertEqual(server._original_url, "https://cdn/new-master.m3u8")
+        self.assertIn(4, server.seg_map)
+        self.assertEqual(server.seg_map[4], "https://cdn/new4.ts")
+        server.server_close()
+
+    def test_full_reload_without_resolver_is_noop(self):
+        server = _make_server()
+        server._resolver = None
+        self.assertFalse(server._full_reload())
+        server.server_close()
+
+    def test_full_reload_throttled(self):
+        server = _make_server()
+        calls = {"n": 0}
+
+        def resolver():
+            calls["n"] += 1
+            return ("https://cdn/m.m3u8", {})
+
+        server._resolver = resolver
+        server._original_url = "https://cdn/m.m3u8"
+
+        fresh = "#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:0\nhttps://cdn/a.ts\n"
+
+        class _Resp:
+            status_code = 200
+            text = fresh
+
+        with patch.object(server.httpx_client, "get", return_value=_Resp()):
+            server._full_reload()
+            server._full_reload()  # throttled
+
+        self.assertEqual(calls["n"], 1)
+        server.server_close()
+
+
 if __name__ == "__main__":
     unittest.main()
